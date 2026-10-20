@@ -4,5 +4,8 @@ sqlalchemy>=2
 python-multipart
 python-dotenv
 httpx
-jupyter_client
-ipykernel
+pytest
+pandas
+# превью parquet / xlsx в панели файлов
+pyarrow
+openpyxl

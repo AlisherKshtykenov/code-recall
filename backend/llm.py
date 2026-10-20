@@ -1,7 +1,6 @@
 """LLM-слой: два провайдера (Ollama локально, Groq API), один интерфейс chat()."""
 import json
 import os
-import re
 
 import httpx
 
@@ -57,62 +56,30 @@ def _groq(s, messages, want_json, timeout):
     return r.json()["choices"][0]["message"]["content"]
 
 
-def chat_json(messages: list[dict], **kw) -> dict:
-    text = chat(messages, want_json=True, **kw)
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        m = re.search(r"\{.*\}", text, re.S)  # модель обернула JSON в текст
-        if m:
-            return json.loads(m.group(0))
-        raise LLMError(f"LLM вернул не JSON: {text[:300]}")
-
-
-def suggest_split(source: str) -> list[dict]:
-    """Просим LLM разбить .py на логические блоки — только номерами строк."""
-    numbered = "\n".join(f"{i + 1:4d}| {l}" for i, l in enumerate(source.splitlines()))
+def review_comment(title: str, reference: dict, mine: dict) -> dict:
+    """Комментарий после сдачи: стиль и отличия от эталона. На оценку не влияет.
+    Строго JSON {comment: str, differences: [str]}; кривой ответ -> один повтор -> LLMError."""
+    def block(files):
+        return "\n\n".join(f"### {name}\n```python\n{code}\n```" for name, code in sorted(files.items()))
     prompt = (
-        "Разбей Python-файл на логические блоки для заучивания: импорты, "
-        "классы, функции, подготовка данных, цикл обучения, оценка и т.п. "
-        "Каждый блок — цельный смысловой кусок. Блоки идут подряд и покрывают весь файл.\n"
-        'Ответь строго JSON: {"blocks": [{"title": "...", "kind": '
-        '"imports|class|function|train|code|main", "start_line": N, "end_line": M}]}\n\n'
-        + numbered)
-    data = chat_json([{"role": "user", "content": prompt}])
-    return data.get("blocks", [])
-
-
-def describe_blocks(title: str, blocks: list[tuple[str, str]]) -> dict:
-    """Описания заданий словами, без кода: что должен делать каждый блок."""
-    parts = "\n\n".join(f"### Блок {i + 1}: {t}\n```python\n{code}\n```"
-                        for i, (t, code) in enumerate(blocks))
-    prompt = (
-        f"Ниже эталонный код «{title}», разбитый на блоки. Я буду писать его по памяти.\n"
-        "Сформулируй задание СЛОВАМИ по-русски, без кода, без готовых строк и без "
-        "подсказок по синтаксису. Можно называть, что блок должен сделать, какие "
-        "сущности создать, какие входы/выходы и размерности, но не как это написать.\n"
-        '1) "task": задача целиком в 2–4 предложениях;\n'
-        '2) "blocks": список описаний, по одному на блок, в том же порядке (1–3 предложения).\n'
-        'Ответь строго JSON: {"task": "...", "blocks": ["...", ...]}\n\n' + parts)
-    return chat_json([{"role": "user", "content": prompt}])
-
-
-def suggest_tests(title: str, blocks: list[tuple[str, str]]) -> list[dict]:
-    parts = "\n\n".join(f"### Блок «{t}»\n```python\n{code}\n```" for t, code in blocks)
-    prompt = (
-        f"Ниже эталонный код «{title}» по блокам. Предложи 3–8 тестов результата.\n"
-        "Тест — короткий Python-код, который выполняется ПОСЛЕ всего кода в том же пространстве имён; "
-        "значение последнего выражения — результат. Тест не должен зависеть от имён локальных "
-        "переменных внутри функций — только от публичных функций/классов/переменных верхнего уровня.\n"
-        "mode=\"match\": результат сравнивается с эталоном (пример: quicksort([3,1,2]); "
-        "tuple(SimpleCNN()(torch.randn(8,3,32,32)).shape); sum(p.numel() for p in model.parameters())).\n"
-        "mode=\"assert\": результат должен быть True (пример: losses[-1] < losses[0]).\n"
-        "Если есть случайность — фиксируй torch.manual_seed / np.random.seed внутри теста.\n"
-        'Ответь строго JSON: {"tests": [{"block": "<название блока>", "name": "...", '
-        '"code": "...", "mode": "match|assert"}]}\n\n' + parts)
-    data = chat_json([{"role": "user", "content": prompt}])
-    tests = data.get("tests", [])
-    return tests if isinstance(tests, list) else []
+        f"Задача «{title}». Ниже эталонное решение и решение ученика, написанное по памяти.\n"
+        "Коротко по-русски (2–4 предложения) оцени стиль и читаемость кода ученика и назови отличия от "
+        "эталона в подходе. Не пересказывай код. Правильность проверяют тесты — её не оценивай.\n"
+        'Ответь строго JSON: {"comment": "...", "differences": ["...", ...]}\n\n'
+        f"ЭТАЛОН:\n{block(reference)}\n\nУЧЕНИК:\n{block(mine)}")
+    messages = [{"role": "user", "content": prompt}]
+    for _ in range(2):
+        text = chat(messages, want_json=True, timeout=240)
+        try:
+            data = json.loads(text)
+            if isinstance(data.get("comment"), str) and isinstance(data.get("differences"), list) \
+                    and all(isinstance(x, str) for x in data["differences"]):
+                return {"comment": data["comment"], "differences": data["differences"]}
+        except (ValueError, AttributeError):
+            pass
+        messages += [{"role": "assistant", "content": text[:3000]},
+                     {"role": "user", "content": 'Нужен строго JSON {"comment": строка, "differences": [строки]}.'}]
+    raise LLMError("модель вернула ответ не в нужном формате")
 
 
 def ping() -> dict:

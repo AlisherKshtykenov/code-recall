@@ -1,0 +1,8 @@
+{
+  "title": "Анализ оценок студентов",
+  "kind": "ml",
+  "tag": "pandas",
+  "difficulty": 2,
+  "timeout": 60,
+  "main": "analysis.py"
+}

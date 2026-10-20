@@ -8,12 +8,11 @@ import zipfile
 from datetime import date, datetime
 from pathlib import Path
 
-from .db import DATA_DIR, engine
+from .db import DATA_DIR, DB_PATH, engine
 
-DB_PATH = DATA_DIR / "recall.db"
 BACKUP_DIR = DATA_DIR / "backups"
 KEEP = 7
-REQUIRED_TABLES = {"references", "ref_versions", "ref_cells", "tests", "attempts", "settings"}
+REQUIRED_TABLES = {"tasks", "task_versions", "attempts", "settings"}
 
 
 def snapshot(dest: Path):
@@ -56,21 +55,22 @@ def list_backups() -> list[dict]:
 
 
 def export_zip() -> bytes:
-    """Архив: recall.db + исходники всех версий эталонов (для чтения глазами) + manifest."""
+    """Архив: recall.db + текстовые файлы текущих версий задач (для чтения глазами) + manifest.
+    Датасеты из data/ в архив не входят — они бывают большими и часто привязаны к папкам на диске."""
     buf = io.BytesIO()
     tmp = DATA_DIR / "export-tmp.db"
     snapshot(tmp)
     try:
         con = sqlite3.connect(tmp)
-        rows = con.execute('SELECT r.id, r.filename, r.title, v.number, v.source FROM "references" r '
-                           "JOIN ref_versions v ON v.reference_id = r.id ORDER BY r.id, v.number").fetchall()
+        rows = con.execute("SELECT t.name, v.files FROM tasks t JOIN task_versions v ON v.task_id = t.id "
+                           "WHERE v.number = (SELECT MAX(number) FROM task_versions WHERE task_id = t.id)").fetchall()
         counts = {t: con.execute(f'SELECT COUNT(*) FROM "{t}"').fetchone()[0] for t in REQUIRED_TABLES}
         con.close()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
             z.write(tmp, "recall.db")
-            for rid, filename, title, num, src in rows:
-                name = Path(filename)
-                z.writestr(f"references/{rid:03d}_{name.stem}/v{num}{name.suffix}", src)
+            for name, files in rows:
+                for rel, text in json.loads(files).items():
+                    z.writestr(f"tasks/{name}/{rel}", text)
             z.writestr("manifest.json", json.dumps({
                 "app": "CODE RECALL", "exported_at": datetime.now().isoformat(timespec="seconds"),
                 "counts": counts}, ensure_ascii=False, indent=2))
@@ -97,7 +97,7 @@ def import_zip(data: bytes) -> dict:
         missing = REQUIRED_TABLES - tables
         if missing:
             raise ValueError(f"в базе нет таблиц: {', '.join(sorted(missing))}")
-        refs = con.execute('SELECT COUNT(*) FROM "references"').fetchone()[0]
+        refs = con.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
         con.close()
     except sqlite3.DatabaseError:
         incoming.unlink(missing_ok=True)
@@ -118,4 +118,16 @@ def import_zip(data: bytes) -> dict:
     dst.close()
     src.close()
     incoming.unlink(missing_ok=True)
-    return {"references": refs, "previous_saved_as": saved.name}
+    restore_task_folders()
+    return {"tasks": refs, "previous_saved_as": saved.name}
+
+
+def restore_task_folders():
+    """Папки задач на диске = текущие версии из базы (data/ и results/ не трогаются)."""
+    from . import taskfs
+    con = sqlite3.connect(DB_PATH)
+    rows = con.execute("SELECT t.name, v.files FROM tasks t JOIN task_versions v ON v.task_id = t.id "
+                       "WHERE v.number = (SELECT MAX(number) FROM task_versions WHERE task_id = t.id)").fetchall()
+    con.close()
+    for name, files in rows:
+        taskfs.materialize(name, json.loads(files))

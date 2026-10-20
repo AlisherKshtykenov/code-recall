@@ -1,17 +1,15 @@
-"""Задания и ноутбук: попытка = своё Jupyter-ядро + черновик ячеек + подсказки."""
+"""Попытка решения задачи — мини-IDE: файлы, «Запустить», консоль, «Проверить», «Сдать»."""
 import json
-import random
+import threading
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from . import checking, kernels, review, workspace
-from .db import Attempt, Reference, RefVersion, SessionLocal, get_setting
+from . import checking, files_api, review, runner, taskfs
+from .db import Attempt, SessionLocal, Task, TaskVersion
 
 router = APIRouter(prefix="/api")
-MODES = {"scratch": "полностью с нуля", "cells": "по ячейкам", "gaps": "восстанови пропуск",
-         "block": "повторить блок"}
 
 
 def get_db():
@@ -29,100 +27,52 @@ def load(db, aid) -> Attempt:
 def active(db, aid) -> Attempt:
     a = load(db, aid)
     if a.status != "active":
-        raise HTTPException(409, "попытка уже завершена")
+        raise HTTPException(409, "попытка уже сдана")
     return a
 
 
-def kernel_args(a: Attempt) -> dict:
-    """Ядро попытки: Python эталона, рабочая папка results/attempts/<id> с data/ эталона."""
-    return {"python": workspace.resolve_python(a.reference.python or ""),
-            "cwd": str(workspace.attempt_dir(a.reference_id, a.id))}
-
-
-def build_task(ref: Reference, mode: str, seed: int, target: int | None = None) -> dict:
-    cells = ref.current.cells
-    code_idx = [i for i, c in enumerate(cells) if c.kind != "markdown"]
-    given = set()
-    if mode == "gaps" and len(code_idx) > 1:
-        # Импорты даём всегда, из остальных — примерно половину; писать хотя бы один блок.
-        rest = [i for i in code_idx if cells[i].kind != "imports"]
-        given = {i for i in code_idx if cells[i].kind == "imports"}
-        rng = random.Random(seed)
-        given |= set(rng.sample(rest, len(rest) // 2))
-        if given >= set(code_idx):
-            given.discard(rng.choice(rest))
-    if mode == "block":
-        # Повтор одного блока: всё до него дано и выполняется само, блоки после — не показываем.
-        given = {i for i in code_idx if i < target}
-    blocks = []
-    for i, c in enumerate(cells):
-        if mode == "block" and i > target:
-            break
-        md = c.kind == "markdown"
-        b = {"index": i, "kind": c.kind, "title": c.title, "description": c.description,
-             "given": md or i in given, "md": md}
-        if md or i in given:
-            b["code"] = c.code
-        blocks.append(b)
-    task = {"title": ref.title, "tag": ref.tag, "mode": mode, "task": ref.task,
-            "notes": ref.notes, "blocks": blocks, "hints": {}}
-    if mode == "block":
-        task.update(target=target, target_title=cells[target].title, auto_run=True)
-    return task
+def adir(a: Attempt):
+    return taskfs.attempt_dir(a.task.name, a.id)
 
 
 def public(a: Attempt, db) -> dict:
-    task = json.loads(a.task)
-    if a.mode == "scratch" and "plan" not in task["hints"]:
-        task["blocks"] = []  # в режиме «с нуля» структура скрыта, пока не открыт план
-    return {"id": a.id, "reference_id": a.reference_id, "mode": a.mode,
-            "mode_name": MODES[a.mode] + (f": «{task['target_title']}»" if a.mode == "block" else ""),
-            "status": a.status, "kernel_key": f"a{a.id}",
-            "started_at": a.started_at.isoformat(timespec="seconds"),
-            "total_ms": a.total_ms, "cells": json.loads(a.cells), "task": task,
-            "score": a.score, "report": json.loads(a.report) if a.report else None,
-            "grade": a.grade, "grade_auto": a.grade_auto, "grade_manual": bool(a.grade_manual),
-            "grade_name": review.GRADES.get(a.grade), "grades": review.GRADES,
-            "due_at": a.reference.due_at.date().isoformat() if a.reference.due_at else None,
-            "kernel": kernels.state(f"a{a.id}"),
-            "cell_timeout": int(get_setting(db, "cell_timeout", "60"))}
-
-
-def initial_cells(task: dict) -> list[dict]:
-    if task["mode"] == "scratch":
-        return [{"block": None, "given": False, "code": "", "time_ms": 0}]
-    return [{"block": b["index"], "given": b["given"], "md": b.get("md", False),
-             "code": b.get("code", ""), "time_ms": 0} for b in task["blocks"]]
-
-
-class StartIn(BaseModel):
-    reference_id: int
-    mode: str = "cells"
-    block: int | None = None  # для mode=block — номер блока в текущей версии
-
-
-@router.post("/attempts")
-def start_attempt(body: StartIn, db=Depends(get_db)):
-    if body.mode not in MODES:
-        raise HTTPException(400, "неизвестный режим")
-    ref = db.get(Reference, body.reference_id)
-    if ref is None or not ref.current or not any(c.kind != "markdown" for c in ref.current.cells):
-        raise HTTPException(404, "в эталоне нет блоков кода")
-    if body.mode == "block":
-        cells = ref.current.cells
-        if body.block is None or not 0 <= body.block < len(cells) or cells[body.block].kind == "markdown":
-            raise HTTPException(400, "укажите блок кода")
-    a = Attempt(reference_id=ref.id, version_id=ref.current.id, mode=body.mode)
-    db.add(a)
-    db.flush()
-    task = build_task(ref, body.mode, seed=a.id, target=body.block)
-    a.task = json.dumps(task, ensure_ascii=False)
-    a.cells = json.dumps(initial_cells(task), ensure_ascii=False)
-    db.commit()
+    t = a.task
+    v = db.get(TaskVersion, a.version_id)
+    files = json.loads(v.files)
+    roles = json.loads(v.roles or "{}")
+    rep = json.loads(a.report) if a.report else None
     try:
-        kernels.start(f"a{a.id}", **kernel_args(a))
-    except ValueError as e:  # окружение эталона не найдено — ядро не стартует, но попытка есть
-        print("ядро не запущено:", e)
+        py = taskfs.resolve_python(t.python)
+    except ValueError as e:
+        py = f"ошибка: {e}"
+    main = t.main_file if t.main_file in roles else next(
+        (f for f in ("main.py", "train.py", "solution.py") if f in roles), sorted(roles)[0] if roles else "")
+    return {"id": a.id, "task_id": t.id, "title": t.title, "kind": t.kind, "tag": t.tag,
+            "version": v.number, "description": files.get("description.md", ""), "status": a.status,
+            "started_at": a.started_at.isoformat(timespec="seconds"), "total_ms": a.total_ms,
+            "files": sorted(json.loads(a.files)), "roles": roles, "main_file": main,
+            "checks": a.checks, "ref_opened": bool(a.ref_opened), "timeout": t.timeout, "python": py,
+            "score": a.score, "grade": a.grade, "grade_auto": a.grade_auto, "grade_manual": bool(a.grade_manual),
+            "grade_name": review.GRADES.get(a.grade), "grades": review.GRADES, "report": rep,
+            "due_at": t.due_at.date().isoformat() if t.due_at else None,
+            "data_link": taskfs.data_link(t.name), "worker": runner.state(f"a{a.id}")}
+
+
+@router.post("/tasks/{tid}/attempts")
+def start_attempt(tid: int, db=Depends(get_db)):
+    t = db.get(Task, tid)
+    if t is None:
+        raise HTTPException(404, "задача не найдена")
+    existing = next((a for a in reversed(t.attempts) if a.status == "active"), None)
+    if existing:
+        return public(existing, db)  # незаконченная попытка — продолжаем её
+    v = t.current
+    files = json.loads(v.files)
+    start = taskfs.attempt_start_files(files, json.loads(v.roles or "{}"))
+    a = Attempt(task_id=t.id, version_id=v.id, files=json.dumps(start, ensure_ascii=False))
+    db.add(a)
+    db.commit()
+    taskfs.write_code(adir(a), start)
     return public(a, db)
 
 
@@ -130,151 +80,188 @@ def start_attempt(body: StartIn, db=Depends(get_db)):
 def get_attempt(aid: int, db=Depends(get_db)):
     a = load(db, aid)
     if a.status == "active":
-        try:
-            kernels.start(f"a{a.id}", **kernel_args(a))  # после ухода со страницы — новое ядро
-        except ValueError:
-            pass
+        taskfs.write_code(adir(a), json.loads(a.files))  # папка совпадает с черновиком
     return public(a, db)
 
 
-@router.get("/references/{rid}/attempts")
-def list_attempts(rid: int, db=Depends(get_db)):
-    rows = db.query(Attempt).filter_by(reference_id=rid).order_by(Attempt.started_at.desc()).all()
-    out = []
-    for a in rows:
-        task = json.loads(a.task)
-        out.append({"id": a.id, "mode": a.mode,
-                    "mode_name": MODES[a.mode] + (f": {task.get('target_title')}" if a.mode == "block" else ""),
-                    "status": a.status, "started_at": a.started_at.isoformat(timespec="minutes"),
-                    "total_ms": a.total_ms, "score": a.score,
-                    "grade": review.GRADES.get(a.grade), "grade_manual": bool(a.grade_manual),
-                    "conflicts": json.loads(a.report).get("conflicts", 0) if a.report else 0,
-                    "hints": len(task.get("hints", {}))})
-    return out
+@router.get("/tasks/{tid}/attempts")
+def list_attempts(tid: int, db=Depends(get_db)):
+    rows = db.query(Attempt).filter_by(task_id=tid).order_by(Attempt.started_at.desc()).all()
+    return [{"id": a.id, "status": a.status, "started_at": a.started_at.isoformat(timespec="minutes"),
+             "finished_at": a.finished_at.isoformat(timespec="minutes") if a.finished_at else None,
+             "total_ms": a.total_ms, "score": a.score, "grade": review.GRADES.get(a.grade),
+             "grade_manual": bool(a.grade_manual), "checks": a.checks, "ref_opened": bool(a.ref_opened)}
+            for a in rows]
 
 
-@router.get("/attempts/{aid}/autorun")
-def autorun_plan(aid: int, db=Depends(get_db)):
-    """Что выполнится перед повтором блока и сколько это займёт по прошлым запускам.
-    Тяжёлый блок с действительным кэшем — загрузка кэша; без кэша — пропуск (можно включить)."""
-    from . import cache
-    a = load(db, aid)
-    task = json.loads(a.task)
-    ref = a.reference
-    version = db.get(RefVersion, a.version_id)
-    heavy = set(json.loads(ref.heavy or "[]"))
-    times = json.loads(ref.block_times or "{}")
-    try:
-        py = workspace.resolve_python(ref.python or "")
-    except ValueError:
-        py = ""
-    items = []
-    for b in task["blocks"]:
-        if b.get("md") or not b["given"]:
-            continue
-        i, title = b["index"], b["title"]
-        item = {"index": i, "title": title, "heavy": title in heavy, "est_ms": times.get(title)}
-        if title in heavy:
-            st = cache.status(ref.id, version.cells, i, py) if py else {"valid": False}
-            if st.get("valid"):
-                item.update(action="cache", cache=st, est_ms=None)
-            else:
-                item.update(action="skip", reason="тяжёлый блок, кэша нет" + (" (устарел — код или окружение изменились)"
-                                                                              if st.get("exists") else ""))
-        else:
-            item["action"] = "run"
-        items.append(item)
-    known = [x["est_ms"] for x in items if x["action"] == "run" and x["est_ms"] is not None]
-    return {"items": items, "total_ms": sum(known),
-            "unknown": sum(1 for x in items if x["action"] == "run" and x["est_ms"] is None)}
-
-
-class GradeIn(BaseModel):
-    grade: int | None = None  # 1..4; None — вернуть автоматический
-
-
-@router.post("/attempts/{aid}/grade")
-def set_grade(aid: int, body: GradeIn, db=Depends(get_db)):
-    """«Не согласен с оценкой»: ручной уровень сразу пересчитывает расписание."""
-    a = load(db, aid)
-    if a.status != "submitted" or a.grade_auto is None:
-        raise HTTPException(409, "уровень можно менять только у проверенной попытки")
-    if body.grade is not None and body.grade not in review.GRADES:
-        raise HTTPException(400, "уровень 1..4")
-    review.set_manual_grade(db, a, body.grade)
-    return public(a, db)
-
-
-class DraftIn(BaseModel):
-    cells: list[dict]
+class TimeIn(BaseModel):
     total_ms: int
 
 
-@router.put("/attempts/{aid}/draft")
-def save_draft(aid: int, body: DraftIn, close: bool = False, db=Depends(get_db)):
-    """Автосохранение. close=true — пользователь ушёл со страницы: ядро гасим,
-    при возвращении поднимется новое (черновик и таймеры сохранены)."""
+@router.put("/attempts/{aid}/time")
+def save_time(aid: int, body: TimeIn, db=Depends(get_db)):
     a = active(db, aid)
-    a.cells = json.dumps(body.cells, ensure_ascii=False)
-    a.total_ms = body.total_ms
+    a.total_ms = max(a.total_ms, body.total_ms)
     db.commit()
-    if close:
-        kernels.stop(f"a{aid}")
     return {"ok": True}
 
 
-class HintIn(BaseModel):
-    key: str  # "plan" или номер блока
+# ---------- файлы попытки ----------
 
-
-@router.post("/attempts/{aid}/hint")
-def hint(aid: int, body: HintIn, db=Depends(get_db)):
-    """Открыть подсказку можно только так — факт использования сохраняется."""
-    a = active(db, aid)
-    task = json.loads(a.task)
-    cells = db.get(RefVersion, a.version_id).cells
-    if body.key == "plan":
-        code = [c for c in cells if c.kind != "markdown"]
-        text = "\n".join(f"{i + 1}. [{c.kind}] {c.title}" + (f" — {c.description}" if c.description else "")
-                         for i, c in enumerate(code))
-    else:
-        i = int(body.key)
-        if not 0 <= i < len(cells) or cells[i].kind == "markdown":
-            raise HTTPException(400, "подсказка есть только у блоков кода")
-        lines = [l for l in cells[i].code.splitlines() if l.strip() and not l.strip().startswith("#")]
-        text = "\n".join(lines[:2]) + ("\n…" if len(lines) > 2 else "")
-    task["hints"][body.key] = text
-    a.task = json.dumps(task, ensure_ascii=False)
+def sync_files(db, a: Attempt):
+    """Файлы кода попытки в базе = .py в папке попытки (кроме data/ и results/)."""
+    base = adir(a)
+    files = {}
+    for p in sorted(base.rglob("*.py")):
+        rel = p.relative_to(base).as_posix()
+        if rel.split("/")[0] in ("data", "results") or "__pycache__" in rel:
+            continue
+        files[rel] = p.read_text(encoding="utf-8", errors="replace")
+    a.files = json.dumps(files, ensure_ascii=False)
     db.commit()
-    return public(a, db)
+
+
+def _attempt_files(aid, db, write):
+    a = db.get(Attempt, aid)
+    if a is None:
+        raise ValueError("попытка не найдена")
+    if write and a.status != "active":
+        raise ValueError("попытка сдана — файлы только для чтения")
+
+    def on_change(db2, rel):
+        if rel.endswith(".py") or "." not in rel.split("/")[-1]:
+            sync_files(db2, db2.get(Attempt, aid))
+    return adir(a), on_change
+
+
+file_router = files_api.make_router("/api/attempts", _attempt_files)
+
+
+class ResetIn(BaseModel):
+    path: str
+
+
+@router.post("/attempts/{aid}/reset")
+def reset_file(aid: int, body: ResetIn, db=Depends(get_db)):
+    """«Сбросить файл»: вернуть заготовку (или пустой файл; «дан» — как в эталоне)."""
+    a = active(db, aid)
+    v = db.get(TaskVersion, a.version_id)
+    start = taskfs.attempt_start_files(json.loads(v.files), json.loads(v.roles or "{}"))
+    if body.path not in start:
+        raise HTTPException(400, "этого файла нет в задаче")
+    files = json.loads(a.files)
+    files[body.path] = start[body.path]
+    a.files = json.dumps(files, ensure_ascii=False)
+    db.commit()
+    (adir(a) / body.path).write_text(start[body.path], encoding="utf-8")
+    return {"content": start[body.path]}
+
+
+# ---------- запуск и консоль ----------
+
+class RunIn(BaseModel):
+    path: str
+
+
+class ExecIn(BaseModel):
+    code: str
+
+
+def worker_args(a: Attempt) -> dict:
+    try:
+        py = taskfs.resolve_python(a.task.python)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"key": f"a{a.id}", "python": py, "cwd": str(adir(a)), "task_id": a.task_id}
+
+
+@router.post("/attempts/{aid}/run")
+def run_file(aid: int, body: RunIn, db=Depends(get_db)):
+    a = active(db, aid)
+    if not (adir(a) / body.path).is_file():
+        raise HTTPException(404, "файла нет")
+    return {"job": runner.submit(**worker_args(a), cmd={"op": "run", "path": body.path}, timeout=a.task.timeout)}
+
+
+@router.post("/attempts/{aid}/exec")
+def exec_code(aid: int, body: ExecIn, db=Depends(get_db)):
+    a = active(db, aid)
+    return {"job": runner.submit(**worker_args(a), cmd={"op": "exec", "code": body.code}, timeout=a.task.timeout)}
+
+
+@router.post("/attempts/{aid}/stop")
+def stop(aid: int):
+    runner.interrupt(f"a{aid}")
+    return {"ok": True}
+
+
+@router.post("/attempts/{aid}/restart")
+def restart(aid: int):
+    runner.stop(f"a{aid}")  # новый процесс поднимется при следующем запуске
+    return {"ok": True}
+
+
+@router.get("/attempts/{aid}/worker")
+def worker_state(aid: int):
+    return runner.state(f"a{aid}")
+
+
+@router.get("/jobs/{job}")
+def poll(job: str, have: int = 0, rev: int = 0):
+    j = runner.JOBS.get(job)
+    if j is None:
+        return {"state": "lost"}
+    return j.poll(have, rev)
+
+
+# ---------- проверка и сдача ----------
+
+def _check_job(aid: int, final: bool) -> str:
+    job = runner.new_job("submit" if final else "check")
+    job.owner = f"a{aid}"
+    job.state = "running"
+
+    def go():
+        try:
+            res = checking.run_check(aid, job)
+        except Exception as e:
+            job.note(f"проверка упала: {e}\n")
+            res = {"fatal": f"проверка упала: {e}", "tests": [], "passed": 0, "total": 0, "broken": 0}
+        if final:
+            try:
+                checking.finish_submit(aid, res)
+            except Exception as e:
+                job.note(f"не удалось сохранить отчёт: {e}\n")
+                with SessionLocal() as db:
+                    a = db.get(Attempt, aid)
+                    a.status = "submitted"
+                    a.report = json.dumps({"result": res, "fatal": str(e)}, ensure_ascii=False)
+                    db.commit()
+        job.finish({"status": "ok", "check": res})
+
+    threading.Thread(target=go, daemon=True).start()
+    return job.id
+
+
+@router.post("/attempts/{aid}/check")
+def check(aid: int, db=Depends(get_db)):
+    """«Проверить»: тесты без оценки, сколько угодно раз (влияет на оценку только числом нажатий)."""
+    a = active(db, aid)
+    a.checks += 1
+    db.commit()
+    return {"job": _check_job(aid, final=False), "checks": a.checks}
 
 
 @router.post("/attempts/{aid}/submit")
-def submit(aid: int, body: DraftIn, db=Depends(get_db)):
-    """Сохраняем ответ, гасим ядро ноутбука и запускаем проверку в фоне."""
+def submit(aid: int, body: TimeIn, db=Depends(get_db)):
+    """«Сдать»: финальный прогон, оценка, время, сдвиг расписания."""
     a = active(db, aid)
-    a.cells = json.dumps(body.cells, ensure_ascii=False)
-    a.total_ms = body.total_ms
+    a.total_ms = max(a.total_ms, body.total_ms)
     a.status = "checking"
     a.finished_at = datetime.now()
-    a.report = json.dumps({"progress": "в очереди"}, ensure_ascii=False)
     db.commit()
-    kernels.stop(f"a{aid}")
-    checking.start_check(aid)
-    return public(a, db)
-
-
-@router.post("/attempts/{aid}/recheck")
-def recheck(aid: int, db=Depends(get_db)):
-    """Повторная проверка — например, после запуска Ollama."""
-    a = load(db, aid)
-    if a.status not in ("submitted",):
-        raise HTTPException(409, "проверять можно только сданную попытку")
-    a.status = "checking"
-    a.report = json.dumps({"progress": "в очереди"}, ensure_ascii=False)
-    db.commit()
-    checking.start_check(aid)
-    return public(a, db)
+    runner.stop(f"a{aid}")
+    return {"job": _check_job(aid, final=True)}
 
 
 @router.post("/attempts/{aid}/abandon")
@@ -283,5 +270,102 @@ def abandon(aid: int, db=Depends(get_db)):
     a.status = "abandoned"
     a.finished_at = datetime.now()
     db.commit()
-    kernels.stop(f"a{aid}")
+    runner.stop(f"a{aid}")
     return {"ok": True}
+
+
+@router.post("/attempts/{aid}/reference")
+def open_reference(aid: int, db=Depends(get_db)):
+    """Эталон. До сдачи — только с отметкой «открыт» (снижает оценку)."""
+    a = load(db, aid)
+    if a.status == "active" and not a.ref_opened:
+        a.ref_opened = 1
+        db.commit()
+    v = db.get(TaskVersion, a.version_id)
+    files = json.loads(v.files)
+    return {"files": taskfs.reference_files(files), "tests": taskfs.test_files(files),
+            "roles": json.loads(v.roles or "{}")}
+
+
+class GradeIn(BaseModel):
+    grade: int | None = None
+
+
+@router.post("/attempts/{aid}/grade")
+def set_grade(aid: int, body: GradeIn, db=Depends(get_db)):
+    """«Не согласен с оценкой»: ручной уровень сразу пересчитывает расписание."""
+    a = load(db, aid)
+    if a.status != "submitted":
+        raise HTTPException(409, "уровень можно менять только у сданной попытки")
+    if body.grade is not None and body.grade not in review.GRADES:
+        raise HTTPException(400, "уровень 1..4")
+    checking.set_manual_grade(db, a, body.grade)
+    return public(a, db)
+
+
+# ---------- запуск эталона в редакторе задачи ----------
+
+def dev_args(t: Task) -> dict:
+    try:
+        py = taskfs.resolve_python(t.python)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"key": f"t{t.id}", "python": py, "cwd": str(taskfs.dev_dir(t.name)), "task_id": t.id}
+
+
+@router.post("/tasks/{tid}/run")
+def task_run(tid: int, body: RunIn, db=Depends(get_db)):
+    """Запуск файла эталона (reference/x.py) из редактора задачи: код лежит в корне .dev/."""
+    t = db.get(Task, tid)
+    if t is None:
+        raise HTTPException(404, "задача не найдена")
+    path = body.path[len("reference/"):] if body.path.startswith("reference/") else body.path
+    args = dev_args(t)
+    if not (taskfs.dev_dir(t.name) / path).is_file():
+        raise HTTPException(400, "запускать можно файлы из reference/")
+    return {"job": runner.submit(**args, cmd={"op": "run", "path": path}, timeout=t.timeout)}
+
+
+@router.post("/tasks/{tid}/exec")
+def task_exec(tid: int, body: ExecIn, db=Depends(get_db)):
+    t = db.get(Task, tid)
+    if t is None:
+        raise HTTPException(404, "задача не найдена")
+    return {"job": runner.submit(**dev_args(t), cmd={"op": "exec", "code": body.code}, timeout=t.timeout)}
+
+
+@router.post("/tasks/{tid}/stop")
+def task_stop(tid: int):
+    runner.interrupt(f"t{tid}")
+    return {"ok": True}
+
+
+@router.post("/tasks/{tid}/check")
+def task_check(tid: int, db=Depends(get_db)):
+    """Тесты на эталоне из текущей папки задачи (до сохранения версии) — проверить сами тесты."""
+    t = db.get(Task, tid)
+    if t is None:
+        raise HTTPException(404, "задача не найдена")
+    job = runner.new_job("check")
+    job.owner = f"t{tid}"
+    job.state = "running"
+    name, timeout = t.name, t.timeout
+    py = dev_args(t)["python"]
+
+    def go():
+        import shutil
+        files = taskfs.snapshot(name)
+        d = taskfs.run_dir(name, taskfs.reference_files(files), taskfs.test_files(files))
+        try:
+            res = runner.run_pytest(py, d, timeout, job)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+        tests = [{**x, "status": x["status"]} for x in res.get("tests", {}).values()]
+        for e in res.get("collection_errors", []):
+            tests.append({"id": e["file"], "name": e["file"], "file": e["file"], "status": "error", "time": 0,
+                          "message": e["message"], "text": e["text"]})
+        job.finish({"status": "ok", "check": {"tests": tests, "fatal": res.get("fatal"),
+                                               "passed": sum(x["status"] == "pass" for x in tests), "total": len(tests)}})
+
+    threading.Thread(target=go, daemon=True).start()
+    return {"job": job.id}

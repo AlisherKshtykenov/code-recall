@@ -1,54 +1,49 @@
-"""SQLite-база через SQLAlchemy. Все модели в одном файле."""
+"""SQLite через SQLAlchemy. Задача = рабочая папка; база хранит версии её текстовых файлов,
+попытки и расписание повторений."""
+import os
+import sqlite3
 from datetime import datetime
 from pathlib import Path
 
-from sqlalchemy import (Column, DateTime, Float, ForeignKey, Integer, String,
-                        Text, create_engine)
+from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, String, Text, create_engine
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 
-import os
-
-# CODE_RECALL_DATA — другая папка данных (например, для отдельной тестовой копии)
+# CODE_RECALL_DATA — другая папка данных (например, отдельная копия для экспериментов)
 DATA_DIR = Path(os.getenv("CODE_RECALL_DATA") or Path(__file__).resolve().parent.parent / "data")
-DATA_DIR.mkdir(exist_ok=True)
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+DB_PATH = DATA_DIR / "recall.db"
 
-engine = create_engine(f"sqlite:///{DATA_DIR / 'recall.db'}",
-                       connect_args={"check_same_thread": False})
+engine = create_engine(f"sqlite:///{DB_PATH}", connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 Base = declarative_base()
 
 
-class Reference(Base):
-    """Эталон: то, что учим. Код хранится в версиях."""
-    __tablename__ = "references"
+class Task(Base):
+    """Задача: папка data/tasks/<name>/ (description.md, reference/, starter/, tests/, data/, results/)."""
+    __tablename__ = "tasks"
     id = Column(Integer, primary_key=True)
+    name = Column(String, nullable=False, unique=True)  # имя папки
     title = Column(String, nullable=False)
-    filename = Column(String, nullable=False, index=True)
+    kind = Column(String, default="algo")  # algo | ml
     tag = Column(String, default="")
-    difficulty = Column(Integer, default=3)  # 1..5
+    difficulty = Column(Integer, default=3)
     notes = Column(Text, default="")
-    task = Column(Text, default="")  # описание задачи «с нуля» (словами, без кода)
-    due_at = Column(DateTime, nullable=True)  # следующее повторение; None = новый
-    # состояние FSRS (пересчитывается по истории попыток, см. review.replay)
-    fsrs_s = Column(Float, nullable=True)  # стабильность, дни
-    fsrs_d = Column(Float, nullable=True)  # сложность 1..10
+    python = Column(Text, default="")  # путь к .venv / python; "" — окружение приложения
+    timeout = Column(Integer, default=60)  # секунд на запуск и прогон тестов
+    main_file = Column(String, default="")  # что запускает «Запустить» по умолчанию
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+    # FSRS (пересчитывается по истории попыток, см. review.replay)
+    due_at = Column(DateTime, nullable=True)
+    fsrs_s = Column(Float, nullable=True)
+    fsrs_d = Column(Float, nullable=True)
     last_review = Column(DateTime, nullable=True)
     reps = Column(Integer, default=0)
     lapses = Column(Integer, default=0)
-    block_states = Column(Text, default="{}")  # JSON: прогресс FSRS по каждому блоку
-    python = Column(Text, default="")  # окружение для ядра: путь к .venv / python; "" — окружение приложения
-    heavy = Column(Text, default="[]")  # JSON: названия тяжёлых блоков (пропуск/кэш при автозапуске)
-    block_times = Column(Text, default="{}")  # JSON: {блок: мс последнего запуска кода эталона}
-    created_at = Column(DateTime, default=datetime.now)
-    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
-    versions = relationship("RefVersion", back_populates="reference",
-                            order_by="RefVersion.number",
+    versions = relationship("TaskVersion", back_populates="task", order_by="TaskVersion.number",
                             cascade="all, delete-orphan")
-    tests = relationship("Test", back_populates="reference", order_by="Test.id",
-                         cascade="all, delete-orphan")
-    attempts = relationship("Attempt", back_populates="reference",
-                            order_by="Attempt.started_at",
+    attempts = relationship("Attempt", back_populates="task", order_by="Attempt.started_at",
                             cascade="all, delete-orphan")
 
     @property
@@ -56,72 +51,40 @@ class Reference(Base):
         return self.versions[-1] if self.versions else None
 
 
-class RefVersion(Base):
-    """Версия эталона: повторная загрузка того же файла создаёт новую."""
-    __tablename__ = "ref_versions"
+class TaskVersion(Base):
+    """Снимок текстовых файлов задачи. data/ и results/ в версии не входят (они большие)."""
+    __tablename__ = "task_versions"
     id = Column(Integer, primary_key=True)
-    reference_id = Column(Integer, ForeignKey("references.id"), nullable=False)
+    task_id = Column(Integer, ForeignKey("tasks.id"), nullable=False)
     number = Column(Integer, nullable=False)
-    source = Column(Text, nullable=False)
+    files = Column(Text, nullable=False)  # JSON {путь: текст}: description.md, reference/*, starter/*, tests/*
+    roles = Column(Text, default="{}")  # JSON {reference/x.py: "write" | "given"}
     content_hash = Column(String, nullable=False)
+    ref_results = Column(Text, default="")  # JSON: результаты тестов на эталоне (кэш по окружению)
     created_at = Column(DateTime, default=datetime.now)
 
-    reference = relationship("Reference", back_populates="versions")
-    cells = relationship("RefCell", back_populates="version",
-                         order_by="RefCell.position",
-                         cascade="all, delete-orphan")
-
-
-class RefCell(Base):
-    """Логический блок эталона (ячейка). Название уникально в версии."""
-    __tablename__ = "ref_cells"
-    id = Column(Integer, primary_key=True)
-    version_id = Column(Integer, ForeignKey("ref_versions.id"), nullable=False)
-    position = Column(Integer, nullable=False)
-    kind = Column(String, default="code")  # imports/class/function/train/code/main/markdown
-    title = Column(String, default="")
-    code = Column(Text, default="")
-    description = Column(Text, default="")  # словесное описание (без кода)
-
-    version = relationship("RefVersion", back_populates="cells")
-
-
-class Test(Base):
-    """Тест привязан к эталону и к блоку по названию — так он переживает версии.
-    Если блока с таким названием в текущей версии нет, тест «без блока»."""
-    __tablename__ = "tests"
-    id = Column(Integer, primary_key=True)
-    reference_id = Column(Integer, ForeignKey("references.id"), nullable=False)
-    block = Column(String, default="")  # название блока; "" = тест на весь код
-    name = Column(String, default="")
-    code = Column(Text, default="")  # Python; результат — значение последнего выражения
-    mode = Column(String, default="match")  # match: как у эталона; assert: должно быть True
-    approved = Column(Integer, default=1)  # 0 — предложен LLM, ждёт подтверждения
-    broken = Column(Text, default="")  # не проходит на эталоне: текст ошибки
-
-    reference = relationship("Reference", back_populates="tests")
+    task = relationship("Task", back_populates="versions")
 
 
 class Attempt(Base):
-    """Попытка решения задания."""
     __tablename__ = "attempts"
     id = Column(Integer, primary_key=True)
-    reference_id = Column(Integer, ForeignKey("references.id"), nullable=False)
-    version_id = Column(Integer, ForeignKey("ref_versions.id"), nullable=False)
-    mode = Column(String, default="cells")  # scratch | cells | gaps | block
+    task_id = Column(Integer, ForeignKey("tasks.id"), nullable=False)
+    version_id = Column(Integer, ForeignKey("task_versions.id"), nullable=False)
     status = Column(String, default="active")  # active | checking | submitted | abandoned
     started_at = Column(DateTime, default=datetime.now)
     finished_at = Column(DateTime, nullable=True)
     total_ms = Column(Integer, default=0)
-    cells = Column(Text, default="[]")  # JSON: [{block, given, code, time_ms, hint}]
-    task = Column(Text, default="{}")  # JSON: что показали пользователю
-    score = Column(Integer, nullable=True)  # 0..100 (этап 3–4)
-    report = Column(Text, default="")  # JSON-отчёт
+    files = Column(Text, default="{}")  # JSON {имя.py: текст} — файлы попытки
+    checks = Column(Integer, default=0)  # сколько раз нажато «Проверить»
+    ref_opened = Column(Integer, default=0)  # открывал эталон до сдачи
+    score = Column(Integer, nullable=True)
     grade_auto = Column(Integer, nullable=True)  # 1 забыл, 2 трудно, 3 нормально, 4 легко
-    grade = Column(Integer, nullable=True)  # итоговый уровень (идёт в расписание)
-    grade_manual = Column(Integer, default=0)  # 1 — уровень поставлен вручную
+    grade = Column(Integer, nullable=True)
+    grade_manual = Column(Integer, default=0)
+    report = Column(Text, default="")  # JSON-отчёт
 
-    reference = relationship("Reference", back_populates="attempts")
+    task = relationship("Task", back_populates="attempts")
 
 
 class Setting(Base):
@@ -130,18 +93,39 @@ class Setting(Base):
     value = Column(Text, default="")
 
 
+OLD_TABLES = ("ref_cells", "tests", "attempts", "ref_versions", "references")
+OLD_SETTINGS = ("cell_timeout", "w_exec", "w_tests", "w_judge", "hint_penalty", "plan_penalty")
+
+
+def drop_notebook_era():
+    """Разовый переход: эталоны-ноутбуки и их попытки удаляются (перед этим — копия базы)."""
+    if not DB_PATH.exists():
+        return
+    con = sqlite3.connect(DB_PATH)
+    tables = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if "references" not in tables:
+        con.close()
+        return
+    backups = DATA_DIR / "backups"
+    backups.mkdir(exist_ok=True)
+    dst = sqlite3.connect(backups / f"before-tasks-{datetime.now():%Y-%m-%d_%H-%M-%S}.db")
+    with dst:
+        con.backup(dst)
+    dst.close()
+    with con:
+        for t in OLD_TABLES:
+            con.execute(f'DROP TABLE IF EXISTS "{t}"')
+        con.execute(f"DELETE FROM settings WHERE key IN ({','.join('?' * len(OLD_SETTINGS))})", OLD_SETTINGS)
+    con.close()
+    import shutil
+    for d in ("workspaces", "kernelspec", "tmp"):  # папки старых эталонов и Jupyter
+        shutil.rmtree(DATA_DIR / d, ignore_errors=True)
+    print("CODE RECALL: эталоны-ноутбуки удалены, копия базы в data/backups/")
+
+
 def init_db():
+    drop_notebook_era()
     Base.metadata.create_all(engine)
-    # Простая миграция: добавляем колонки, появившиеся в новых этапах.
-    with engine.begin() as conn:
-        for table in Base.metadata.sorted_tables:
-            have = {r[1] for r in conn.exec_driver_sql(f'PRAGMA table_info("{table.name}")')}
-            for col in table.columns:
-                if col.name not in have:
-                    default = col.default.arg if col.default is not None and not callable(col.default.arg) else None
-                    sql_default = f" DEFAULT {default!r}" if isinstance(default, (int, str)) else ""
-                    conn.exec_driver_sql(f'ALTER TABLE "{table.name}" ADD COLUMN "{col.name}" '
-                                         f'{col.type.compile(engine.dialect)}{sql_default}')
 
 
 def get_setting(db, key, default=""):

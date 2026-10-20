@@ -1,0 +1,9 @@
+{
+  "title": "MLP на спиралях (PyTorch)",
+  "kind": "ml",
+  "tag": "PyTorch",
+  "difficulty": 3,
+  "timeout": 120,
+  "main": "train.py",
+  "roles": {"data_utils.py": "given"}
+}

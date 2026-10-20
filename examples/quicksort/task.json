@@ -1,0 +1,8 @@
+{
+  "title": "Быстрая сортировка",
+  "kind": "algo",
+  "tag": "сортировка",
+  "difficulty": 2,
+  "timeout": 30,
+  "main": "solution.py"
+}
