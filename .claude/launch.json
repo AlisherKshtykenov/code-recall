@@ -1,0 +1,6 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {"name": "code-recall", "runtimeExecutable": "python3", "runtimeArgs": ["run.py"], "env": {"NO_BROWSER": "1"}, "port": 8000}
+  ]
+}
