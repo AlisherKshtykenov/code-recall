@@ -8,8 +8,8 @@ from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Response, UploadFile
 from fastapi.staticfiles import StaticFiles
 
-from . import attempts, backup, checking, llm, review, runner, stats, tasks
-from .db import Attempt, SessionLocal, get_setting, init_db, set_setting
+from . import attempts, backup, checking, llm, review, reviews, runner, stats, tasks
+from .db import Attempt, ReviewSession, SessionLocal, Task, get_setting, init_db, set_setting
 
 ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT / ".env")
@@ -25,11 +25,35 @@ async def lifespan(app):
         db.commit()
     backup.start_daily_thread()
     runner.start_reaper()
+    start_stale_reaper()
     yield
     runner.stop_all()
 
 
 app = FastAPI(title="CODE RECALL", lifespan=lifespan)
+STALE_HOURS = 2
+
+
+def start_stale_reaper():
+    """Попытка, о которой сервер не слышал STALE_HOURS (вкладку закрыли, компьютер уснул), —
+    в историю как брошенная, с тем кодом, что был сохранён."""
+    import threading
+    import time
+    from datetime import timedelta
+
+    def loop():
+        while True:
+            try:
+                with SessionLocal() as db:
+                    limit = datetime.now() - timedelta(hours=STALE_HOURS)
+                    for a in db.query(Attempt).filter_by(status="active").all():
+                        if (a.touched_at or a.started_at) < limit:
+                            attempts.abandon_attempt(db, a)
+                            runner.stop(f"a{a.id}")
+            except Exception as e:
+                print("stale reaper:", e)
+            time.sleep(600)
+    threading.Thread(target=loop, daemon=True).start()
 
 
 def get_db():
@@ -40,6 +64,29 @@ def get_db():
 @app.get("/api/today")
 def today(db=Depends(get_db)):
     return review.today_lists(db)
+
+
+@app.get("/api/journal")
+def journal(filter: str = "", task_id: int | None = None, db=Depends(get_db)):
+    """Журнал: попытки и «работа над ошибками». filter: abandoned | errors | reviews."""
+    rows = []
+    q = db.query(Attempt)
+    if task_id:
+        q = q.filter_by(task_id=task_id)
+    for a in q.all():
+        rows.append(attempts.journal_row(a))
+    sq = db.query(ReviewSession)
+    if task_id:
+        sq = sq.filter_by(task_id=task_id)
+    for r in sq.all():
+        rows.append(reviews.journal_row(r, db.get(Task, r.task_id)))
+    if filter == "abandoned":
+        rows = [x for x in rows if x["status"] == "abandoned"]
+    elif filter == "errors":
+        rows = [x for x in rows if x["status"] in ("abandoned", "partial", "failed")]
+    elif filter == "reviews":
+        rows = [x for x in rows if x["type"] == "review"]
+    return sorted(rows, key=lambda x: x["date"], reverse=True)
 
 
 @app.get("/api/stats")
@@ -110,4 +157,6 @@ app.include_router(tasks.router)
 app.include_router(tasks.file_router)
 app.include_router(attempts.router)
 app.include_router(attempts.file_router)
+app.include_router(reviews.router)
+app.include_router(reviews.file_router)
 app.mount("/", StaticFiles(directory=ROOT / "frontend", html=True), name="frontend")

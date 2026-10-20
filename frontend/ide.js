@@ -22,7 +22,8 @@ cfg = {
   buttons(el, ide),                  // кнопки справа в верхней панели (таймер, «Сдать» …)
   run(path) -> jobId, exec(code) -> jobId, stop(), check() -> jobId,   // действия (необязательные)
   runnable(path) -> bool,
-  diffs: {файл: текст эталона}       // режим просмотра: вкладка открывается как diff
+  refFiles: {файл: эталон}           // просмотр: у вкладки переключатель «мой код / эталон / diff»
+  noPaste(path), onOpen(path, model, ide), readonlyFile(path), checkLabel, initialOutput
   bindData(), dataLink
 }
 */
@@ -38,7 +39,7 @@ async function openIDE(root, cfg) {
         ${cfg.run && !cfg.readonly ? `<select id="ide-main" class="small" title="что запускает «Запустить»"></select>
           <button id="ide-run" class="success" title="Ctrl/Cmd+Enter">▶ Запустить</button>
           <button id="ide-stop" class="ghost" title="остановить запуск или тесты">■ Стоп</button>` : ""}
-        ${cfg.check && !cfg.readonly ? `<button id="ide-check" class="ghost" title="прогнать тесты, попытка не засчитывается">✓ Проверить</button>` : ""}
+        ${cfg.check && !cfg.readonly ? `<button id="ide-check" class="${cfg.checkClass || "ghost"}" title="${esc(cfg.checkTitle || "прогнать тесты, попытка не засчитывается")}">${esc(cfg.checkLabel || "✓ Проверить")}</button>` : ""}
         <span id="ide-buttons" class="row"></span>
       </div>
       <div class="ide-body" id="ide-body">
@@ -51,6 +52,7 @@ async function openIDE(root, cfg) {
           <section class="pane">
             <div class="pane-head" style="padding:0">
               <div class="filetabs" id="filetabs"></div>
+              <div class="seg" id="cmp-mode" hidden title="что показать для этого файла"><button data-m="mine">мой код</button><button data-m="ref">эталон</button><button data-m="diff">diff</button></div>
             </div>
             <div class="editor-host" id="editor-host"><div class="monaco" id="monaco"></div><div class="viewer" id="viewer" hidden></div></div>
           </section>
@@ -182,7 +184,7 @@ async function openIDE(root, cfg) {
 
   function renderTabs() {
     $("#filetabs", root).innerHTML = ide.tabs.map(t => `<div class="filetab ${t.path === ide.current ? "active" : ""}" data-p="${esc(t.path)}" title="${esc(t.path)}">
-        ${esc(t.path.split("/").pop())}${cfg.roles?.[t.path] === "given" ? '<span class="role">дан</span>' : ""}${t.kind === "diff" ? '<span class="role">diff с эталоном</span>' : ""}
+        ${esc(t.path.split("/").pop())}${cfg.roles?.[t.path] === "given" ? '<span class="role">дан</span>' : ""}${cfg.tabNote ? cfg.tabNote(t.path) : ""}
         ${isDirty(t.path) ? '<span class="dirty" title="не сохранено"></span>' : ""}<span class="x" data-close="${esc(t.path)}">×</span></div>`).join("");
     $$(".filetab", root).forEach(el => el.onclick = e => {
       if (e.target.dataset.close) return closeTab(e.target.dataset.close);
@@ -214,31 +216,46 @@ async function openIDE(root, cfg) {
     if (ide.diffOrig) { ide.diffOrig.dispose(); ide.diffOrig = null; }
   }
 
+  const refModels = {};
+  function refModel(path) {  // эталон файла — отдельная модель только для чтения
+    return refModels[path] ||= monaco.editor.createModel(cfg.refFiles[path] || "", "python", monaco.Uri.parse(`ref:///${cfg.base.replace(/\W+/g, "_")}/${path}`));
+  }
+  $$("#cmp-mode button", root).forEach(b => b.onclick = () => {
+    const tab = ide.tabs.find(t => t.path === ide.current);
+    if (tab) { tab.mode = b.dataset.m; ide.open(tab.path); }
+  });
+
   // Открыть файл: код — в редакторе, таблицы — превью, картинки/аудио/видео — просмотр
   ide.open = async (path, kindHint) => {
     let tab = ide.tabs.find(t => t.path === path);
     const ext = path.split(".").pop().toLowerCase();
-    const kind = kindHint || (cfg.diffs && path in cfg.diffs ? "diff" : EDITABLE.test(path) ? "code"
+    const kind = kindHint || (cfg.refFiles && path in cfg.refFiles ? "cmp" : EDITABLE.test(path) ? "code"
       : ["csv", "tsv", "parquet", "xlsx", "xls", "json"].includes(ext) ? "table"
       : ["png", "jpg", "jpeg", "gif", "svg", "webp"].includes(ext) ? "image" : ["mp4", "webm", "mov"].includes(ext) ? "video"
       : ["mp3", "wav", "ogg", "m4a", "flac"].includes(ext) ? "audio" : "code");
-    if (!tab) { tab = { path, kind }; ide.tabs.push(tab); }
+    if (!tab) { tab = { path, kind, mode: cfg.cmpMode || "diff" }; ide.tabs.push(tab); }
     ide.current = path;
+    const seg = $("#cmp-mode", root);
+    seg.hidden = tab.kind !== "cmp";
+    $$("button", seg).forEach(b => b.classList.toggle("sel", b.dataset.m === tab.mode));
+    ide.blockPaste = false;
     try {
-      if (tab.kind === "code" || tab.kind === "text") {
-        const m = await loadModel(path);
+      if (tab.kind === "code" || tab.kind === "text" || (tab.kind === "cmp" && tab.mode !== "diff")) {
+        const m = tab.kind === "cmp" && tab.mode === "ref" ? refModel(path) : await loadModel(path);
         showViewer(null);
         ide.editor.setModel(m);
-        ide.editor.updateOptions({ readOnly: !!cfg.readonly });
+        ide.editor.updateOptions({ readOnly: !!cfg.readonly || tab.kind === "cmp" || !!(cfg.readonlyFile && cfg.readonlyFile(path)) });
+        ide.blockPaste = !!(cfg.noPaste && cfg.noPaste(path));
         ide.editor.focus();
-      } else if (tab.kind === "diff") {
+        cfg.onOpen && cfg.onOpen(path, m, ide);
+      } else if (tab.kind === "cmp") {
+        // diff: слева эталон, справа мой код
         const mine = await loadModel(path);
         showViewer("");
         $("#viewer", root).style.padding = "0";
-        const orig = ide.diffOrig = monaco.editor.createModel(cfg.diffs[path], "python");
         ide.diffEditor = monaco.editor.createDiffEditor($("#viewer", root), { automaticLayout: true, readOnly: true, fontLigatures: false,
           fontFamily: "JetBrains Mono, Menlo, monospace", fontSize: 13, minimap: { enabled: false }, renderSideBySide: true, originalEditable: false });
-        ide.diffEditor.setModel({ original: orig, modified: mine });
+        ide.diffEditor.setModel({ original: refModel(path), modified: mine });
       } else if (tab.kind === "table") {
         showViewer('<div class="muted spinner">читаю таблицу</div>');
         $("#viewer", root).style.padding = "";
@@ -257,6 +274,16 @@ async function openIDE(root, cfg) {
     } catch (e) { showViewer(`<p class="err">${esc(e.message)}</p>`); }
     renderTabs();
   };
+
+  // Запрет вставки (шаг 2 «работы над ошибками»: перепечатываю руками)
+  const host = $("#editor-host", root);
+  const blockIfNeeded = e => {
+    if (!ide.blockPaste) return;
+    e.preventDefault(); e.stopPropagation();
+    toast("здесь код перепечатывается руками — вставка выключена", true);
+  };
+  host.addEventListener("paste", blockIfNeeded, true);
+  host.addEventListener("drop", blockIfNeeded, true);
 
   // Ctrl/Cmd+S — сохранить, Ctrl/Cmd+Enter — запустить текущий файл
   ide.editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => ide.save());
@@ -330,7 +357,7 @@ async function openIDE(root, cfg) {
       ide.lastCheck = r.result?.check;
       tv.innerHTML = testsHtml(ide.lastCheck) + `<details class="mt"><summary class="muted small">вывод pytest</summary><div data-o></div></details>`;
       renderOutputs($("[data-o]", tv), r.outputs, rawUrl);
-      cfg.onCheck && cfg.onCheck(ide.lastCheck);
+      cfg.onCheck && cfg.onCheck(ide.lastCheck, r.result);
       return ide.lastCheck;
     } catch (e) { tv.innerHTML = `<p class="err">${esc(e.message)}</p>`; }
     finally { if (btn) btn.disabled = false; }
@@ -470,6 +497,12 @@ async function openIDE(root, cfg) {
   refreshTree();
 
   for (const p of cfg.preload || []) loadModel(p).catch(() => {});  // имена из файлов задачи — в автодополнение
+  if (cfg.initialOutput && cfg.initialOutput.outputs) {  // вывод последнего запуска (у брошенной попытки)
+    const o = cfg.initialOutput, outView = $('[data-cv="out"]', root);
+    outView.innerHTML = `<div class="run-head"><span>▶ ${esc(o.path)} · ${esc(fmtDate(o.at))} · последний запуск</span></div><div data-o></div>`;
+    renderOutputs($("[data-o]", outView), o.outputs, rawUrl);
+    ide.outRuns = 1;
+  }
   for (const p of cfg.open || []) await ide.open(p);
   ide.dispose = () => {
     ide.alive = false;
@@ -477,6 +510,7 @@ async function openIDE(root, cfg) {
     disposeDiff();  // сначала редакторы, потом модели — иначе Monaco ругается
     ide.editor && ide.editor.dispose();
     Object.values(ide.models).forEach(m => m.dispose());
+    Object.values(refModels).forEach(m => m.dispose());
     document.body.classList.remove("ide-mode");
   };
   return ide;

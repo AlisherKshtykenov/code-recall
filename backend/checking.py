@@ -86,20 +86,15 @@ def compare(ref: dict, mine: dict) -> list[dict]:
     return out
 
 
-def run_check(attempt_id: int, job) -> dict:
-    """Тесты на эталоне и на файлах попытки. Вывод pytest — в job по мере появления."""
-    with SessionLocal() as db:
-        a = db.get(Attempt, attempt_id)
-        task, version = a.task, db.get(TaskVersion, a.version_id)
-        files = json.loads(version.files)
-        mine_code = json.loads(a.files)
-        python = taskfs.resolve_python(task.python)
+def run_tests(task: Task, version: TaskVersion, code: dict, python: str, job) -> dict:
+    """Тесты на эталоне (из кэша, если можно) и на переданных файлах кода; итог по каждому тесту."""
+    files = json.loads(version.files)
     ref = reference_results(task, version, python, job)
     if ref.get("fatal"):
         job.note(f"\n{ref['fatal']}\n")
         return {"fatal": ref["fatal"], "tests": [], "passed": 0, "total": 0, "broken": 0}
     job.note("\n=== тесты на вашем коде ===\n", "stdout")
-    d = taskfs.run_dir(task.name, mine_code, taskfs.test_files(files))
+    d = taskfs.run_dir(task.name, code, taskfs.test_files(files))
     try:
         mine = runner.run_pytest(python, d, task.timeout, job)
     finally:
@@ -110,6 +105,16 @@ def run_check(attempt_id: int, job) -> dict:
             "broken": sum(t["status"] == "broken" for t in tests),
             "fatal": mine.get("fatal"), "timeout": mine.get("timeout"), "ms": mine["ms"],
             "checked_at": datetime.now().isoformat(timespec="seconds")}
+
+
+def run_check(attempt_id: int, job) -> dict:
+    """«Проверить» / «Сдать»: тесты на файлах попытки."""
+    with SessionLocal() as db:
+        a = db.get(Attempt, attempt_id)
+        task, version = a.task, db.get(TaskVersion, a.version_id)
+        code = json.loads(a.files)
+        python = taskfs.resolve_python(task.python)
+    return run_tests(task, version, code, python, job)
 
 
 # ---------- оценка и отчёт ----------

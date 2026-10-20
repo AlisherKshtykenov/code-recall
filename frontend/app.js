@@ -5,11 +5,20 @@ let current = null;  // открытая IDE — закрываем при ух�
 $("#theme").onclick = () => setTheme(theme() === "dark" ? "light" : "dark");
 
 const routes = { today: viewToday, tasks: viewTasks, task: viewTask, attempt: viewAttempt, edit: viewEdit,
-                 stats: viewStats, settings: viewSettings };
+                 journal: viewJournal, review: viewReview, stats: viewStats, settings: viewSettings };
+let lastHash = location.hash, skipRoute = false;
 function route() {
+  if (skipRoute) { skipRoute = false; return; }
+  // из незаконченной попытки не уходим молча: она сохранится как брошенная
+  if (current && current.leaveGuard && !current.leaveGuard()) {
+    skipRoute = true;
+    location.hash = lastHash;
+    return;
+  }
+  lastHash = location.hash;
   if (current) { current.dispose(); current = null; }
   const [name, ...args] = location.hash.replace(/^#\/?/, "").split("/");
-  const nav = { task: "tasks", attempt: "tasks", edit: "tasks" }[name] || name || "today";
+  const nav = { task: "tasks", attempt: "journal", edit: "tasks", review: "journal" }[name] || name || "today";
   $$(".topbar nav a").forEach(a => a.classList.toggle("active", a.dataset.r === nav));
   document.body.classList.remove("ide-mode");
   view.innerHTML = '<div class="muted spinner">загрузка</div>';
@@ -42,14 +51,22 @@ async function viewToday() {
       <td class="nowrap" style="text-align:right"><button class="${cls === "muted" ? "" : "primary"} small" data-go="${r.id}">${r.active_attempt ? "продолжить" : "решать"}</button></td>
     </tr>`).join("")}</tbody></table></div>` : `<div class="empty">${empty}</div>`}</div>`;
   const total = t.overdue.length + t.due.length;
+  const reviewsCard = t.reviews.length ? `<div class="card"><div class="row" style="margin-bottom:6px"><h2 style="margin:0">Работа над ошибками</h2>
+      <span class="badge warn">${t.reviews.length}</span></div><table><tbody>${t.reviews.map(r => `<tr class="link" data-review="${r.id}">
+        <td style="width:28px"><span class="status-ico warn">✎</span></td>
+        <td><span class="title">${esc(r.title)}</span><div class="muted small">${esc(r.reason)}</div></td>
+        <td>${kindBadge(r.kind)}</td><td class="muted nowrap">${fmtDate(r.started_at)}</td>
+        <td style="text-align:right"><button class="primary small">продолжить</button></td></tr>`).join("")}</tbody></table></div>` : "";
   view.innerHTML = `<div class="row" style="margin-bottom:14px"><h1 style="margin:0">Сегодня</h1>
       <span class="muted">${total ? `к повторению: ${total}` : "повторений на сегодня нет"}${t.new.length ? ` · новых задач: ${t.new.length}` : ""}</span></div>
+    ${reviewsCard}
     ${section(t.overdue, "Просрочено", "err", "ничего не просрочено")}
     ${section(t.due, "На сегодня", "warn", "на сегодня всё повторено")}
     ${section(t.new, "Новые", "muted", 'новых задач нет — <a href="#/tasks">загрузите задачи</a>')}
     ${t.upcoming.length ? section(t.upcoming, "Ближайшие 7 дней", "ok", "") : ""}`;
   $$("[data-go]").forEach(b => b.onclick = e => { e.stopPropagation(); startAttempt(b.dataset.go); });
   $$("tr[data-id]").forEach(tr => tr.onclick = () => { location.hash = `#/task/${tr.dataset.id}`; });
+  $$("tr[data-review]").forEach(tr => tr.onclick = () => { location.hash = `#/review/${tr.dataset.review}`; });
 }
 
 // ---------------- Задачи (как список задач LeetCode) ----------------
@@ -177,17 +194,10 @@ async function viewTask(id, tab = "about") {
         <div class="mt">${t.reference.map(f => `<span class="badge">${esc(f)} · ${t.roles[f] === "given" ? "дан" : "пишу сам"}</span>`).join(" ")}</div>
         <div class="muted small mt">тестов: ${t.test_files.map(esc).join(", ") || "нет"} · лимит времени ${t.timeout} с · версия ${t.version}${t.dirty ? ' · <span class="warn">в папке есть несохранённые изменения</span>' : ""}</div></div>`;
   } else if (tab === "attempts") {
-    const list = await api(`/api/tasks/${id}/attempts`);
-    const done = list.filter(a => a.status === "submitted").reverse();
-    box.innerHTML = `<div class="card">${list.length ? `<div class="scroll-x"><table><thead><tr><th>Дата</th><th>Статус</th><th>Оценка</th><th>Время</th><th>Уровень</th><th>«Проверить»</th></tr></thead><tbody>
-      ${list.map(a => `<tr class="link" data-a="${a.id}"><td class="nowrap">${fmtDate(a.started_at)}</td>
-        <td>${{ active: '<span class="badge warn">в процессе</span>', checking: '<span class="badge warn">проверяется</span>', submitted: '<span class="badge ok">сдано</span>', abandoned: '<span class="badge">брошено</span>' }[a.status]}</td>
-        <td>${a.score ?? "—"}</td><td class="mono">${fmtMs(a.total_ms)}</td>
-        <td class="${GRADE_CLS[a.grade] || "muted"}">${a.grade ?? "—"}${a.grade_manual ? " ✎" : ""}</td><td class="muted">${a.checks}${a.ref_opened ? " · эталон открыт" : ""}</td></tr>`).join("")}
-      </tbody></table></div>` : '<div class="empty">попыток ещё не было</div>'}</div>
-      ${done.length ? '<div class="card"><h3>Оценка и время по попыткам</h3><div id="hist"></div></div>' : ""}`;
-    $$("tr[data-a]", box).forEach(tr => tr.onclick = () => { location.hash = `#/attempt/${tr.dataset.a}`; });
-    if (done.length) historyCharts($("#hist"), done.map(a => ({ date: a.finished_at, score: a.score, total_ms: a.total_ms })));
+    box.innerHTML = '<div class="card" id="jr"></div><div class="card" id="hist-card" hidden><h3>Оценка и время по попыткам</h3><div id="hist"></div></div>';
+    const rows = await journalTable($("#jr"), { task_id: id });
+    const done = rows.filter(r => r.type === "attempt" && r.score != null).reverse();
+    if (done.length) { $("#hist-card").hidden = false; historyCharts($("#hist"), done.map(a => ({ date: a.finished_at, score: a.score, total_ms: a.total_ms }))); }
   } else if (tab === "versions") {
     box.innerHTML = `<div class="card"><table><thead><tr><th>Версия</th><th>Загружена</th><th>Файлы</th><th></th></tr></thead><tbody>
       ${[...t.versions].reverse().map(v => `<tr><td>v${v.number}${v.number === t.version ? ' <span class="badge ok">текущая</span>' : ""}</td><td class="muted">${fmtDate(v.created_at)}</td>
@@ -266,7 +276,56 @@ async function bindDataPrompt(taskId, ide) {
   catch (e) { toast(e.message, true); }
 }
 
+// ---------------- Журнал ----------------
+const JSTATUS = { active: "warn", checking: "warn", abandoned: "err", passed: "ok", partial: "warn", failed: "err" };
+const JFILTERS = [["", "Все"], ["abandoned", "Только брошенные"], ["errors", "С ошибками"], ["reviews", "Работа над ошибками"]];
+
+// Таблица попыток и «работы над ошибками». opts.task_id — только одна задача.
+async function journalTable(box, opts = {}, filter = "") {
+  const q = new URLSearchParams({ filter, ...(opts.task_id ? { task_id: opts.task_id } : {}) });
+  const rows = await api(`/api/journal?${q}`);
+  box.innerHTML = `<div class="row" style="margin-bottom:10px">${JFILTERS.map(([k, n]) => `<button class="small ${k === filter ? "sel" : "ghost"}" data-f="${k}">${n}</button>`).join("")}</div>
+    ${rows.length ? `<div class="scroll-x"><table><thead><tr><th>Дата</th>${opts.task_id ? "" : "<th>Задача</th>"}<th>Тип</th><th>Статус</th><th>Оценка</th><th>Время</th><th>«Проверить»</th><th>Эталон</th><th></th></tr></thead><tbody>
+    ${rows.map(r => `<tr class="link" data-open="${r.type === "review" ? `#/review/${r.id}` : `#/attempt/${r.id}`}">
+      <td class="nowrap muted">${fmtDate(r.date)}</td>${opts.task_id ? "" : `<td><span class="title">${esc(r.task)}</span></td>`}
+      <td>${r.type === "review" ? `<span class="badge">работа над ошибками</span>${r.status === "active" ? ` <span class="muted small">шаг ${r.step}/3</span>` : ""}` : '<span class="badge">попытка</span>'}</td>
+      <td><span class="badge ${JSTATUS[r.status] || ""}">${esc(r.status_name)}</span></td>
+      <td>${r.score ?? '<span class="muted">—</span>'}</td><td class="mono muted">${fmtMs(r.total_ms)}</td>
+      <td class="muted">${r.checks}</td><td>${r.ref_opened ? `<span class="warn small">${r.type === "review" ? "подглядывал" : "открывал"}</span>` : '<span class="muted">—</span>'}</td>
+      <td style="text-align:right">${r.type === "attempt" && ["abandoned", "partial", "passed"].includes(r.status)
+        ? `<button class="small ${r.status === "passed" ? "ghost" : "primary"}" data-review="${r.id}">Работа над ошибками</button>` : ""}</td></tr>`).join("")}
+    </tbody></table></div>` : '<div class="empty">записей нет</div>'}`;
+  $$("[data-f]", box).forEach(b => b.onclick = () => journalTable(box, opts, b.dataset.f));
+  $$("tr[data-open]", box).forEach(tr => tr.onclick = e => { if (!e.target.closest("button")) location.hash = tr.dataset.open; });
+  $$("[data-review]", box).forEach(b => b.onclick = e => { e.stopPropagation(); startReview(+b.dataset.review); });
+  return rows;
+}
+
+async function viewJournal() {
+  view.innerHTML = '<h1>Журнал</h1><p class="muted">Все попытки — сданные, брошенные и с ошибками — и «работа над ошибками». Клик — открыть только для чтения.</p><div class="card" id="jr"></div>';
+  await journalTable($("#jr"));
+}
+
+// Начать «работу над ошибками»: если файлов «пишу сам» несколько — выбрать один или все подряд
+async function startReview(attemptId) {
+  const a = await api(`/api/attempts/${attemptId}`);
+  const written = a.files.filter(f => a.roles[f] !== "given");
+  let files = null;
+  if (written.length > 1) {
+    const choice = prompt(`Какой файл переписать? Введите имя (${written.join(", ")}) или «все», чтобы пройти все подряд.`, "все");
+    if (choice === null) return;
+    files = choice.trim().toLowerCase() === "все" ? null : [choice.trim()];
+    if (files && !written.includes(files[0])) return toast("нет такого файла «пишу сам»", true);
+  }
+  try {
+    const r = await api(`/api/attempts/${attemptId}/reviews`, { method: "POST", json: { files } });
+    location.hash = `#/review/${r.id}`;
+  } catch (e) { toast(e.message, true); }
+}
+
 // ---------------- Решение (IDE) ----------------
+const OUTCOME_TITLE = { abandoned: "брошена", passed: "сдана", partial: "тесты частично", checking: "проверяется" };
+
 async function viewAttempt(id) {
   let a = await api(`/api/attempts/${id}`);
   const readonly = a.status !== "active";
@@ -275,31 +334,32 @@ async function viewAttempt(id) {
   const totalMs = () => readonly ? a.total_ms : baseMs + (Date.now() - loadedAt);
   const written = Object.entries(a.roles).filter(([, r]) => r === "write").map(([f]) => f);
   let refFiles = null;
-  const diffs = readonly && a.report?.diffs ? await api(`${base}/reference`, { method: "POST" }).then(r => { refFiles = r.files; return Object.fromEntries(written.map(f => [f, r.files[f] || ""])); }) : null;
+  if (readonly) refFiles = (await api(`${base}/reference`, { method: "POST" })).files;  // после окончания — без штрафа
+  const needsWork = readonly && (a.outcome === "abandoned" || a.outcome === "partial");
 
   const leftTabs = [
     { id: "desc", label: "Описание", render: el => { el.innerHTML = `<h2>${esc(a.title)}</h2><div class="row" style="margin-bottom:10px">${kindBadge(a.kind)}${a.tag ? `<span class="badge">${esc(a.tag)}</span>` : ""}
         <span class="muted small">v${a.version} · лимит ${a.timeout} с</span></div>
       <div class="md">${a.description ? md(a.description) : '<p class="muted">описания нет</p>'}</div>
       <div class="label mt">Файлы</div>${a.files.map(f => `<div class="small"><span class="mono">${esc(f)}</span> — ${a.roles[f] === "given" ? "дан" : "пишу сам"}</div>`).join("")}`; } },
-    ...(readonly && a.report ? [{ id: "report", label: "Отчёт", render: el => renderReport(el, a, (na) => { a = na; }) }] : []),
+    ...(readonly ? [{ id: "report", label: a.report?.weights ? "Отчёт" : "Итог", render: el => a.report?.weights ? renderReport(el, a, na => { a = na; }) : renderAbandoned(el, a) }] : []),
     { id: "attempts", label: "Попытки", render: async el => {
       const list = await api(`/api/tasks/${a.task_id}/attempts`);
-      const done = list.filter(x => x.status === "submitted").reverse();
-      el.innerHTML = `${list.map(x => `<div class="row small" style="padding:4px 0;border-bottom:1px solid var(--line)"><a href="#/attempt/${x.id}">${fmtDate(x.started_at)}</a>
-          <span class="grow"></span>${x.score != null ? `<b>${x.score}</b>` : `<span class="muted">${x.status === "active" ? "в процессе" : "—"}</span>`}<span class="mono muted">${fmtMs(x.total_ms)}</span></div>`).join("")}
+      const done = list.filter(x => x.score != null).reverse();
+      el.innerHTML = `${list.map(x => `<div class="row small" style="padding:4px 0;border-bottom:1px solid var(--line)"><a href="#/attempt/${x.id}">${fmtDate(x.date)}</a>
+          <span class="badge ${JSTATUS[x.status] || ""}">${esc(x.status_name)}</span><span class="grow"></span>${x.score != null ? `<b>${x.score}</b>` : ""}<span class="mono muted">${fmtMs(x.total_ms)}</span></div>`).join("")}
         ${done.length ? '<div id="h" class="mt"></div>' : ""}`;
       if (done.length) historyCharts($("#h", el), done.map(x => ({ date: x.finished_at, score: x.score, total_ms: x.total_ms })));
     } },
-    { id: "ref", label: "Эталон", render: el => renderReference(el, a, base, readonly, () => refFiles, f => { refFiles = f; a.ref_opened = true; }) },
+    ...(readonly ? [] : [{ id: "ref", label: "Эталон", render: el => renderReference(el, a, base, readonly, () => refFiles, f => { refFiles = f; a.ref_opened = true; }) }]),
   ];
 
   current = await openIDE(view, {
-    title: a.title + (readonly ? " · сдано" : ""), base, readonly, back: `#/task/${a.task_id}`,
+    title: a.title + (readonly ? ` · ${OUTCOME_TITLE[a.outcome] || a.outcome}` : ""), base, readonly, back: `#/task/${a.task_id}`,
     roles: a.roles, main: a.main_file, pyFiles: a.files, preload: a.files, expand: [],
-    open: readonly ? written.filter(f => diffs && f in diffs) : [a.main_file, ...a.files.filter(f => a.roles[f] === "write" && f !== a.main_file)].filter(Boolean),
-    diffs, dataLink: a.data_link,
-    leftTabs, leftTab: readonly && a.report ? "report" : "desc",
+    open: readonly ? written : [a.main_file, ...a.files.filter(f => a.roles[f] === "write" && f !== a.main_file)].filter(Boolean),
+    refFiles: readonly ? refFiles : null, cmpMode: "diff", dataLink: a.data_link, initialOutput: a.last_output,
+    leftTabs, leftTab: readonly ? "report" : "desc",
     run: path => api(`${base}/run`, { method: "POST", json: { path } }).then(r => r.job),
     exec: code => api(`${base}/exec`, { method: "POST", json: { code } }).then(r => r.job),
     stop: () => api(`${base}/stop`, { method: "POST" }),
@@ -307,25 +367,32 @@ async function viewAttempt(id) {
     bindData: ide => bindDataPrompt(a.task_id, ide),
     buttons: (el, ide) => {
       el.innerHTML = `<span class="timer" id="timer" title="время попытки">${fmtMs(totalMs())}</span>
-        ${readonly ? `<span class="badge ok">сдано</span>${a.score != null ? `<b>${a.score}</b>` : ""}`
-          : `<span class="muted small" id="checks"></span><button class="ghost" id="reset" title="вернуть заготовку текущего файла">↺ Сбросить файл</button>
-             <button class="ghost" id="abandon" title="бросить попытку">Бросить</button><button class="primary" id="submit">Сдать</button>`}`;
-      if (readonly) return;
+        ${readonly ? `<span class="badge ${JSTATUS[a.outcome] || ""}">${OUTCOME_TITLE[a.outcome] || a.outcome}</span>${a.score != null ? `<b>${a.score}</b>` : ""}
+            ${a.status !== "checking" ? `<button class="${needsWork ? "primary" : "ghost"}" id="work">${needsWork ? "Работа над ошибками сейчас" : "Работа над ошибками"}</button>` : ""}`
+          : `<span class="muted small" id="checks"></span><button class="icon-btn" id="reset" title="вернуть текущий файл к заготовке">↺ файл</button>
+             <button class="ghost" id="abandon" title="закончить без сдачи: попытка сохранится как брошенная">Сбросить</button><button class="primary" id="submit">Сдать</button>`}`;
+      if (readonly) {
+        const w = $("#work", el);
+        if (w) w.onclick = () => startReview(a.id);
+        return;
+      }
       $("#reset", el).onclick = async () => {
         const p = ide.current;
         if (!p || !(p in a.roles)) return toast("откройте файл задачи", true);
-        if (!confirm(`Вернуть ${p} к заготовке? Текущий код пропадёт.`)) return;
+        if (!confirm(`Вернуть ${p} к заготовке? Текущий код этого файла пропадёт.`)) return;
         const r = await api(`${base}/reset`, { method: "POST", json: { path: p } });
         ide.models[p].setValue(r.content);
         await ide.save(p);
       };
       $("#abandon", el).onclick = async () => {
-        if (!confirm("Бросить попытку? Она останется в истории как брошенная.")) return;
-        await saveTime(); await api(`${base}/abandon`, { method: "POST" }); location.hash = `#/task/${a.task_id}`;
+        if (!confirm("Сбросить попытку? Она сохранится в истории как брошенная (со всем кодом), в повторениях — как «забыл».")) return;
+        await finishAs("abandon");
+        viewAttemptAgain();
       };
       $("#submit", el).onclick = async () => {
         if (!confirm("Сдать решение? Будет финальный прогон тестов и оценка.")) return;
         await ide.saveAll();
+        ended = true;
         clearInterval(tick); clearInterval(autosave);
         $("#submit", el).disabled = true;
         ide.showConsole("tests");
@@ -333,20 +400,62 @@ async function viewAttempt(id) {
         tv.innerHTML = '<div class="run-head"><span>финальный прогон</span><span class="spinner"></span></div><div data-o></div>';
         const { job } = await api(`${base}/submit`, { method: "POST", json: { total_ms: totalMs() } });
         await followJob(job, outs => renderOutputs($("[data-o]", tv), outs, ide.rawUrl));
-        viewAttempt(id);
+        viewAttemptAgain();
       };
     },
   });
   const ide = current;
+  let ended = readonly;
   function updateChecks() { const c = $("#checks"); if (c) c.textContent = a.checks ? `«Проверить»: ${a.checks}` : ""; }
   updateChecks();
-  if (readonly && a.report?.result) ide.showTests(a.report.result);
-  const saveTime = () => readonly ? null : fetch(`${base}/time`, { method: "PUT", keepalive: true, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ total_ms: Math.round(totalMs()) }) }).catch(() => {});
+  if (readonly) ide.showTests(a.report?.result || a.last_check);
+  const saveTime = () => ended ? null : fetch(`${base}/time`, { method: "PUT", keepalive: true, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ total_ms: Math.round(totalMs()) }) }).catch(() => {});
+  // Уход без сдачи = «брошена»: код всех файлов и время сохраняются
+  async function finishAs() {
+    if (ended) return;
+    ended = true;
+    await ide.saveAll();
+    await api(`${base}/abandon`, { method: "POST", json: { total_ms: Math.round(totalMs()) } });
+  }
+  function viewAttemptAgain() { ide.leaveGuard = null; ide.dispose(); current = null; viewAttempt(id); }
+  const onPageHide = () => {
+    if (ended) return;
+    ended = true;
+    navigator.sendBeacon(`${base}/abandon`, new Blob([JSON.stringify({ total_ms: Math.round(totalMs()) })], { type: "application/json" }));
+  };
+  const onBeforeUnload = e => { if (!ended) { ide.saveAll(); e.preventDefault(); e.returnValue = ""; } };
+  if (!readonly) {
+    window.addEventListener("pagehide", onPageHide);
+    window.addEventListener("beforeunload", onBeforeUnload);
+    ide.leaveGuard = () => {
+      if (ended) return true;
+      if (!confirm("Уйти без сдачи? Попытка сохранится как брошенная (с кодом и временем).")) return false;
+      finishAs();
+      return true;
+    };
+  }
   const tick = setInterval(() => { const t = $("#timer"); if (!t) return clearInterval(tick); t.textContent = fmtMs(totalMs()); }, 1000);
   const autosave = readonly ? null : setInterval(saveTime, 15000);
   const dispose = ide.dispose;
-  ide.dispose = () => { clearInterval(tick); clearInterval(autosave); saveTime(); dispose(); };
-  window.addEventListener("beforeunload", saveTime, { once: true });
+  ide.dispose = () => {
+    clearInterval(tick); clearInterval(autosave);
+    window.removeEventListener("pagehide", onPageHide);
+    window.removeEventListener("beforeunload", onBeforeUnload);
+    dispose();
+  };
+}
+
+function renderAbandoned(el, a) {
+  const ch = a.last_check;
+  el.innerHTML = `<div class="row"><span class="badge err">брошена</span><span class="muted small">${fmtDate(a.finished_at)}</span></div>
+    <p>Время: <b class="mono">${fmtMs(a.total_ms)}</b> · «Проверить»: ${a.checks}${a.ref_opened ? " · эталон открывал" : ""}</p>
+    <p class="muted small">В повторениях — как «забыл». Следующее повторение: <b>${a.due_at || "—"}</b>.</p>
+    <p class="small">${ch ? `Последняя проверка: <b class="${ch.passed === ch.total && ch.total ? "ok" : "err"}">${ch.passed}/${ch.total}</b> тестов` : "Тесты в этой попытке не запускались."}
+      ${a.last_output ? ` · последний запуск: <span class="mono">${esc(a.last_output.path)}</span>` : ""}</p>
+    <p class="muted small">Код файлов — каким вы его оставили — во вкладках редактора: переключатель «мой код / эталон / diff».</p>
+    ${a.reviews.length ? `<div class="label mt">Работа над ошибками</div>${a.reviews.map(r => `<div class="small"><a href="#/review/${r.id}">${fmtDate(r.started_at)}</a> — ${{ active: `шаг ${r.step}/3`, passed: "пройдена", failed: "не пройдена", abandoned: "брошена" }[r.status]}</div>`).join("")}` : ""}
+    <button class="primary mt" id="work2">Работа над ошибками сейчас</button>`;
+  $("#work2", el).onclick = () => startReview(a.id);
 }
 
 function renderReference(el, a, base, readonly, get, set) {
@@ -399,6 +508,137 @@ function renderReport(el, a, update) {
     if (!document.body.contains(el)) return;
     const na = await api(`/api/attempts/${a.id}`); update(na); renderReport(el, na, update);
   }, 3000);
+}
+
+// ---------------- Работа над ошибками ----------------
+const RSTEPS = [[1, "Смотрю"], [2, "Переписываю с подглядыванием"], [3, "По памяти"]];
+function stepperHtml(r) {
+  return `<div class="stepper">${RSTEPS.map(([n, name]) => `<span class="st ${r.status === "active" && r.step === n ? "cur" : (r.status === "passed" || r.step > n) ? "done" : ""}">${r.status === "passed" || r.step > n ? "✓" : n} ${name}</span>`).join('<span class="muted">→</span>')}
+    ${r.files.length > 1 ? `<span class="muted small">файл ${r.idx + 1} из ${r.files.length}: <span class="mono">${esc(r.file)}</span></span>` : `<span class="muted small mono">${esc(r.file)}</span>`}</div>`;
+}
+const norm = l => l.replace(/\s+/g, "");
+
+async function viewReview(id) {
+  const r = await api(`/api/reviews/${id}`);
+  const base = `/api/reviews/${id}`;
+  if (r.status !== "active") return reviewSummary(r);
+  if (r.step === 1) return reviewStep1(r);
+
+  // Шаги 2–3: та же IDE, что в решении (файлы, data/, консоль, вывод)
+  const step2 = r.step === 2;
+  const refTab = { id: "ref", label: "Эталон", render: el => {
+    el.style.padding = "0";
+    el.innerHTML = `<div class="small muted" style="padding:8px 12px;border-bottom:1px solid var(--line)">эталон <span class="mono">${esc(r.file)}</span> — только чтение</div><div id="ref-ed" style="height:calc(100% - 34px)"></div>`;
+    const ed = monaco.editor.create($("#ref-ed", el), { value: r.reference, language: "python", readOnly: true, automaticLayout: true,
+      minimap: { enabled: false }, fontFamily: "JetBrains Mono, Menlo, monospace", fontSize: 13, fontLigatures: false, scrollBeyondLastLine: false });
+    const prevDispose = el._dispose;
+    el._dispose = () => { ed.dispose(); prevDispose && prevDispose(); };
+  } };
+  const taskTab = { id: "task", label: "Задание", render: el => {
+    el.innerHTML = `<p>Напишите <span class="mono">${esc(r.file)}</span> заново по памяти и сдайте тестами («Сдать шаг»).
+        Если тесты пройдут без подглядывания — шаг пройден и задача вернётся на повтор завтра.</p>
+      ${r.peeked ? `<p class="warn small">Эталон подсмотрен — этот шаг не засчитается.</p><pre class="md"><code>${esc(r.reference || "")}</code></pre>`
+        : '<button class="danger" id="peek">Подсмотреть эталон</button><p class="muted small">Подглядывание отмечается: шаг тогда не засчитывается.</p>'}
+      <div class="md mt">${r.description ? md(r.description) : ""}</div>`;
+    const pk = $("#peek", el);
+    if (pk) pk.onclick = async () => {
+      if (!confirm("Подсмотреть эталон? Шаг 3 тогда не засчитается.")) return;
+      const nr = await api(`${base}/peek`, { method: "POST" });
+      Object.assign(r, nr); taskTab.render(el);
+    };
+  } };
+  let decorations = [];
+  const highlight = (model, editor) => {  // зелёный — строка совпала с эталоном, жёлтый — отличается
+    const ref = (r.reference || "").split("\n");
+    const lines = model.getValue().split("\n");
+    const dec = [];
+    lines.forEach((l, i) => {
+      if (!l.trim()) return;
+      const same = ref[i] !== undefined && norm(ref[i]) === norm(l);
+      dec.push({ range: new monaco.Range(i + 1, 1, i + 1, 1), options: { isWholeLine: true, className: same ? "line-same" : "line-diff",
+        linesDecorationsClassName: same ? "glyph-same" : "glyph-diff" } });
+    });
+    decorations = editor.deltaDecorations(decorations, dec);
+  };
+  const t0 = Date.now(), started = new Date(r.step_started).getTime();
+  current = await openIDE(view, {
+    title: `${r.title} · работа над ошибками`, base, back: `#/attempt/${r.attempt_id}`,
+    open: [r.file], preload: r.all_files, pyFiles: r.all_files, expand: [], main: r.file, dataLink: r.data_link,
+    tabNote: p => p === r.file ? '<span class="role">переписываю</span>' : '<span class="role">эталон</span>',
+    readonlyFile: p => r.all_files.includes(p) && p !== r.file,
+    noPaste: p => step2 && p === r.file,
+    onOpen: (p, model, ide) => {
+      if (!step2 || p !== r.file || model._hl) return;
+      model._hl = true;
+      highlight(model, ide.editor);
+      model.onDidChangeContent(() => { if (ide.current === r.file) highlight(model, ide.editor); });
+    },
+    leftTabs: step2 ? [refTab, { id: "desc", label: "Описание", render: el => { el.innerHTML = `<div class="md">${md(r.description || "")}</div>`; } }] : [taskTab],
+    leftTab: step2 ? "ref" : "task",
+    checkLabel: step2 ? "✓ Проверить" : "Сдать шаг 3", checkClass: step2 ? "ghost" : "primary",
+    checkTitle: step2 ? "шаг закроется, когда все тесты пройдут" : "финальная проверка шага 3 тестами",
+    run: path => api(`${base}/run`, { method: "POST", json: { path } }).then(x => x.job),
+    exec: code => api(`${base}/exec`, { method: "POST", json: { code } }).then(x => x.job),
+    stop: () => api(`${base}/stop`, { method: "POST" }),
+    check: () => api(`${base}/check`, { method: "POST" }).then(x => x.job),
+    onCheck: (check, result) => {
+      const o = result?.outcome;
+      if (o === "step2_passed") { toast("тесты прошли — шаг 2 закрыт, теперь по памяти"); reopen(); }
+      else if (o === "next_file") { toast("файл пройден — следующий"); reopen(); }
+      else if (o === "passed" || o === "failed") reopen();
+      else if (step2) toast(`прошло ${check?.passed ?? 0}/${check?.total ?? 0} — шаг закроется, когда пройдут все тесты`, true);
+    },
+    bindData: ide => bindDataPrompt(r.task_id, ide),
+    buttons: el => {
+      el.innerHTML = `${stepperHtml(r)}<span class="timer" id="timer" title="время шага">${fmtMs(Date.now() - started)}</span>
+        <button class="ghost" id="r-abandon" title="закончить работу над ошибками">Бросить</button>`;
+      $("#r-abandon", el).onclick = async () => {
+        if (!confirm("Бросить работу над ошибками? Она останется в журнале как брошенная.")) return;
+        await api(`${base}/abandon`, { method: "POST" }); reopen();
+      };
+    },
+  });
+  const ide = current;
+  const tick = setInterval(() => { const tt = $("#timer"); if (!tt) return clearInterval(tick); tt.textContent = fmtMs(Date.now() - started); }, 1000);
+  const dispose = ide.dispose;
+  ide.dispose = () => { clearInterval(tick); const lb = $("#left-body"); lb && lb._dispose && lb._dispose(); dispose(); };
+  function reopen() { ide.dispose(); current = null; viewReview(id); }
+  void t0;
+}
+
+// Шаг 1: эталон открыт полностью, рядом мой код из попытки с подсветкой отличий
+async function reviewStep1(r) {
+  view.innerHTML = `<div class="row" style="margin-bottom:10px"><a href="#/attempt/${r.attempt_id}" class="muted">← попытка</a><span class="grow"></span>${stepperHtml(r)}</div>
+    <div class="card"><div class="row"><h2 style="margin:0">${esc(r.title)} · смотрю</h2><span class="grow"></span>
+      <button class="ghost" id="r-abandon">Бросить</button><button class="primary" id="next">Понял, дальше →</button></div>
+      <p class="muted small">Слева — ваш код из попытки, справа — эталон. Отличия подсвечены. Разберитесь, что пошло не так, затем перепишите с подглядыванием.</p>
+      <div class="row small muted" style="justify-content:space-between"><span>мой код</span><span>эталон</span></div>
+      <div id="diff" style="height:calc(100vh - 290px);min-height:320px;border-radius:6px;overflow:hidden"></div></div>`;
+  await loadMonaco();
+  const a = monaco.editor.createModel(r.mine || "", "python"), b = monaco.editor.createModel(r.reference || "", "python");
+  const d = monaco.editor.createDiffEditor($("#diff"), { automaticLayout: true, readOnly: true, renderSideBySide: true, originalEditable: false,
+    minimap: { enabled: false }, fontFamily: "JetBrains Mono, Menlo, monospace", fontSize: 13, fontLigatures: false });
+  d.setModel({ original: a, modified: b });
+  current = { dispose: () => { d.dispose(); a.dispose(); b.dispose(); } };
+  $("#next").onclick = async () => { await api(`/api/reviews/${r.id}/next`, { method: "POST" }); current.dispose(); current = null; viewReview(r.id); };
+  $("#r-abandon").onclick = async () => {
+    if (!confirm("Бросить работу над ошибками?")) return;
+    await api(`/api/reviews/${r.id}/abandon`, { method: "POST" }); current.dispose(); current = null; viewReview(r.id);
+  };
+}
+
+function reviewSummary(r) {
+  const res = { passed: ["ok", "Пройдена: шаг 3 сдан тестами без подглядывания — повтор завтра"], failed: ["err", "Не пройдена — задача сегодня же снова в «Сегодня»"],
+                abandoned: ["muted", "Брошена"] }[r.status] || ["muted", r.status];
+  const total = r.log.reduce((t, x) => t + x.ms, 0);
+  view.innerHTML = `<div class="row" style="margin-bottom:10px"><a href="#/attempt/${r.attempt_id}" class="muted">← исходная попытка</a></div>
+    <div class="card"><h2>${esc(r.title)} · работа над ошибками</h2>${stepperHtml(r)}
+      <p class="${res[0]} mt"><b>${res[1]}</b></p>
+      <p class="small">Следующее повторение: <b>${r.due_at || "—"}</b> · всего ${fmtMs(total)} · ${fmtDate(r.started_at)} — ${fmtDate(r.finished_at)}</p>
+      <table class="mt"><thead><tr><th>Файл</th><th>Шаг</th><th>Время</th><th>«Проверить»</th><th>Итог</th></tr></thead><tbody>
+        ${r.log.map(x => `<tr><td class="mono">${esc(x.file)}</td><td>${x.step} · ${RSTEPS[x.step - 1][1]}</td><td class="mono">${fmtMs(x.ms)}</td><td class="muted">${x.checks}</td>
+          <td>${x.passed ? '<span class="ok">✓</span>' : '<span class="err">✗</span>'}${x.peeked ? ' <span class="warn small">подглядывал</span>' : ""}</td></tr>`).join("")}</tbody></table>
+      <div class="row mt"><a class="btn" href="#/task/${r.task_id}">К задаче</a><a class="btn" href="#/journal">Журнал</a></div></div>`;
 }
 
 // ---------------- Редактор задачи (та же IDE, файлы папки задачи) ----------------

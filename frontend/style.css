@@ -285,3 +285,18 @@ ul.plain li.ok::before { background: var(--ok); } ul.plain li.ok { color: var(--
   .ide { height: auto; min-height: calc(100vh - 50px); }
   .ide-top { height: auto; flex-wrap: wrap; padding: 8px 12px; }
 }
+.seg { display: inline-flex; margin: 0 8px; background: var(--bg); border-radius: 7px; padding: 2px; flex: none; }
+.seg button { background: none; padding: 4px 10px; font-size: 12.5px; border-radius: 5px; color: var(--muted); }
+.seg button.sel { background: var(--panel-2); color: var(--text); }
+.stepper { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.stepper .st { padding: 4px 10px; border-radius: 999px; font-size: 12.5px; background: var(--panel-2); color: var(--muted); }
+.stepper .st.cur { background: var(--accent); color: var(--accent-text); font-weight: 600; }
+.stepper .st.done { color: var(--ok); }
+.line-same { background: rgba(44, 187, 93, .13); }
+.line-diff { background: rgba(255, 192, 30, .14); }
+.glyph-same { background: var(--ok); width: 4px !important; margin-left: 3px; border-radius: 2px; }
+.glyph-diff { background: var(--warn); width: 4px !important; margin-left: 3px; border-radius: 2px; }
+/* верхняя панель IDE: кнопки переносятся, а не налезают друг на друга */
+.ide-top { height: auto; min-height: 46px; flex-wrap: wrap; row-gap: 6px; padding: 6px 12px; }
+#ide-buttons { flex-wrap: wrap; justify-content: flex-end; }
+.ide-top .title { min-width: 120px; flex: 1 1 140px; }

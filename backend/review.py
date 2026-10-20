@@ -5,7 +5,7 @@
 import math
 from datetime import datetime, timedelta
 
-from .db import Attempt, Task
+from .db import Attempt, ReviewSession, Task
 
 GRADES = {1: "забыл", 2: "трудно", 3: "нормально", 4: "легко"}
 THRESHOLDS = [(90, 4), (70, 3), (50, 2), (0, 1)]
@@ -43,8 +43,15 @@ def interval_days(s: float) -> float:
 
 
 def replay(db, task: Task):
-    rows = (db.query(Attempt).filter_by(task_id=task.id, status="submitted")
-            .filter(Attempt.grade.isnot(None)).order_by(Attempt.finished_at).all())
+    """FSRS по истории: сданные попытки (уровень по оценке или вручную) и брошенные («забыл»).
+    Работа над ошибками на стабильность не влияет, но двигает дату: шаг 3 пройден без подглядывания —
+    повтор завтра (не дольше), не пройден — сегодня же."""
+    rows = (db.query(Attempt).filter(Attempt.task_id == task.id, Attempt.status.in_(("submitted", "abandoned")),
+                                     Attempt.grade.isnot(None), Attempt.finished_at.isnot(None))
+            .order_by(Attempt.finished_at).all())
+    sessions = (db.query(ReviewSession).filter(ReviewSession.task_id == task.id,
+                                               ReviewSession.status.in_(("passed", "failed")))
+                .order_by(ReviewSession.finished_at).all())
     state, last, lapses = None, None, 0
     for a in rows:
         state = fsrs_step(state, a.grade, (a.finished_at - last).total_seconds() / 86400 if last else 0)
@@ -57,6 +64,11 @@ def replay(db, task: Task):
     task.fsrs_s, task.fsrs_d, task.last_review = state["s"], state["d"], last
     days = max(1, round(interval_days(state["s"])))
     task.due_at = datetime.combine((last + timedelta(days=days)).date(), datetime.min.time())
+    after = [s for s in sessions if s.finished_at > last]
+    if after:  # последнее событие — работа над ошибками: её итог задаёт дату повтора
+        s = after[-1]
+        day = s.finished_at.date() + timedelta(days=1 if s.status == "passed" else 0)
+        task.due_at = datetime.combine(day, datetime.min.time())
 
 
 def score_grade(score) -> int:
@@ -72,9 +84,14 @@ def task_status(t: Task) -> str:
 
 def today_lists(db) -> dict:
     today = datetime.now().date()
-    overdue, due, new, upcoming = [], [], [], []
+    overdue, due, new, upcoming, reviews = [], [], [], [], []
+    for r in db.query(ReviewSession).filter_by(status="active").all():
+        t = db.get(Task, r.task_id)
+        reviews.append({"id": r.id, "task_id": t.id, "title": t.title, "kind": t.kind, "tag": t.tag, "step": r.step,
+                        "attempt_id": r.attempt_id, "started_at": r.started_at.isoformat(timespec="minutes"),
+                        "reason": f"работа над ошибками не закончена: шаг {r.step} из 3"})
     for t in db.query(Task).all():
-        done = sorted((a for a in t.attempts if a.status == "submitted" and a.grade is not None),
+        done = sorted((a for a in t.attempts if a.status in ("submitted", "abandoned") and a.grade is not None),
                       key=lambda a: a.finished_at)
         last = done[-1] if done else None
         item = {"id": t.id, "title": t.title, "kind": t.kind, "tag": t.tag,
@@ -87,8 +104,17 @@ def today_lists(db) -> dict:
             new.append(item)
             continue
         ago = (today - last.finished_at.date()).days
-        reason = (f"прошлый раз ошибся: «{GRADES[last.grade]}», оценка {last.score}" if last.grade <= 2
-                  else f"давно не повторял: {ago} дн.")
+        lastrev = max((rv for at in t.attempts for rv in at.reviews if rv.status in ("passed", "failed")),
+                      key=lambda r: r.finished_at, default=None)
+        if lastrev and lastrev.finished_at > last.finished_at:
+            reason = ("работа над ошибками пройдена — закрепляем на следующий день" if lastrev.status == "passed"
+                      else "работа над ошибками не пройдена — повторить сегодня")
+        elif last.status == "abandoned":
+            reason = "прошлая попытка брошена"
+        elif last.grade <= 2:
+            reason = f"прошлый раз ошибся: «{GRADES[last.grade]}», оценка {last.score}"
+        else:
+            reason = f"давно не повторял: {ago} дн."
         d = t.due_at.date()
         if d < today:
             item["reason"] = f"просрочено на {(today - d).days} дн. · {reason}"
@@ -101,4 +127,4 @@ def today_lists(db) -> dict:
             upcoming.append(item)
     overdue.sort(key=lambda x: x["due_at"])
     upcoming.sort(key=lambda x: x["due_at"])
-    return {"overdue": overdue, "due": due, "new": new, "upcoming": upcoming}
+    return {"overdue": overdue, "due": due, "new": new, "upcoming": upcoming, "reviews": reviews}

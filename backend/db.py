@@ -83,8 +83,36 @@ class Attempt(Base):
     grade = Column(Integer, nullable=True)
     grade_manual = Column(Integer, default=0)
     report = Column(Text, default="")  # JSON-отчёт
+    last_check = Column(Text, default="")  # JSON: результат последнего «Проверить» (виден и у брошенной)
+    last_output = Column(Text, default="")  # JSON: вывод последнего «Запустить»
+    touched_at = Column(DateTime, nullable=True)  # последняя активность (правка, запуск, таймер)
 
     task = relationship("Task", back_populates="attempts")
+    reviews = relationship("ReviewSession", back_populates="attempt", order_by="ReviewSession.started_at",
+                           cascade="all, delete-orphan")
+
+
+class ReviewSession(Base):
+    """«Работа над ошибками» по попытке: 1 — смотрю, 2 — переписываю с подглядыванием, 3 — по памяти.
+    Файлы проходятся по одному; на FSRS влияет только шаг 3."""
+    __tablename__ = "review_sessions"
+    id = Column(Integer, primary_key=True)
+    attempt_id = Column(Integer, ForeignKey("attempts.id"), nullable=False)
+    task_id = Column(Integer, ForeignKey("tasks.id"), nullable=False)
+    version_id = Column(Integer, ForeignKey("task_versions.id"), nullable=False)
+    status = Column(String, default="active")  # active | passed | failed | abandoned
+    files = Column(Text, default="[]")  # JSON: какие файлы переписываю, по порядку
+    idx = Column(Integer, default=0)  # текущий файл
+    step = Column(Integer, default=1)  # 1 | 2 | 3
+    step_started = Column(DateTime, default=datetime.now)
+    peeked = Column(Integer, default=0)  # подглядывал на шаге 3 текущего файла
+    checks = Column(Integer, default=0)  # «Проверить» на текущем шаге
+    log = Column(Text, default="[]")  # JSON: [{file, step, ms, passed, peeked, checks}]
+    work = Column(Text, default="{}")  # JSON {файл: текст} — что написано в редакторе
+    started_at = Column(DateTime, default=datetime.now)
+    finished_at = Column(DateTime, nullable=True)
+
+    attempt = relationship("Attempt", back_populates="reviews")
 
 
 class Setting(Base):
@@ -123,9 +151,24 @@ def drop_notebook_era():
     print("CODE RECALL: эталоны-ноутбуки удалены, копия базы в data/backups/")
 
 
+def add_missing_columns():
+    """Простая миграция: колонки, появившиеся в новых версиях, добавляются в существующие таблицы."""
+    with engine.begin() as conn:
+        for table in Base.metadata.sorted_tables:
+            have = {r[1] for r in conn.exec_driver_sql(f'PRAGMA table_info("{table.name}")')}
+            for col in table.columns:
+                if col.name in have:
+                    continue
+                default = col.default.arg if col.default is not None and not callable(col.default.arg) else None
+                sql_default = f" DEFAULT {default!r}" if isinstance(default, (int, str)) else ""
+                conn.exec_driver_sql(f'ALTER TABLE "{table.name}" ADD COLUMN "{col.name}" '
+                                     f"{col.type.compile(engine.dialect)}{sql_default}")
+
+
 def init_db():
     drop_notebook_era()
     Base.metadata.create_all(engine)
+    add_missing_columns()
 
 
 def get_setting(db, key, default=""):

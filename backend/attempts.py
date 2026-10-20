@@ -47,7 +47,11 @@ def public(a: Attempt, db) -> dict:
         py = f"ошибка: {e}"
     main = t.main_file if t.main_file in roles else next(
         (f for f in ("main.py", "train.py", "solution.py") if f in roles), sorted(roles)[0] if roles else "")
-    return {"id": a.id, "task_id": t.id, "title": t.title, "kind": t.kind, "tag": t.tag,
+    return {"id": a.id, "task_id": t.id, "title": t.title, "kind": t.kind, "tag": t.tag, "outcome": outcome(a),
+            "last_check": json.loads(a.last_check) if a.last_check else None,
+            "last_output": json.loads(a.last_output) if a.last_output else None,
+            "finished_at": a.finished_at.isoformat(timespec="seconds") if a.finished_at else None,
+            "reviews": [review_short(r) for r in a.reviews],
             "version": v.number, "description": files.get("description.md", ""), "status": a.status,
             "started_at": a.started_at.isoformat(timespec="seconds"), "total_ms": a.total_ms,
             "files": sorted(json.loads(a.files)), "roles": roles, "main_file": main,
@@ -56,6 +60,39 @@ def public(a: Attempt, db) -> dict:
             "grade_name": review.GRADES.get(a.grade), "grades": review.GRADES, "report": rep,
             "due_at": t.due_at.date().isoformat() if t.due_at else None,
             "data_link": taskfs.data_link(t.name), "worker": runner.state(f"a{a.id}")}
+
+
+OUTCOME = {"active": "в процессе", "checking": "проверяется", "abandoned": "брошена",
+           "passed": "сдана", "partial": "тесты частично"}
+
+
+def outcome(a: Attempt) -> str:
+    """Статус для журнала: брошена / сдана (все тесты) / тесты частично."""
+    if a.status != "submitted":
+        return a.status
+    res = (json.loads(a.report) if a.report else {}).get("result") or {}
+    return "passed" if res.get("total") and res.get("passed") == res.get("total") else "partial"
+
+
+def review_short(r) -> dict:
+    return {"id": r.id, "status": r.status, "step": r.step, "idx": r.idx, "files": json.loads(r.files),
+            "started_at": r.started_at.isoformat(timespec="minutes")}
+
+
+def journal_row(a: Attempt) -> dict:
+    o = outcome(a)
+    return {"type": "attempt", "id": a.id, "task_id": a.task_id, "task": a.task.title, "kind": a.task.kind,
+            "status": o, "status_name": OUTCOME.get(o, o),
+            "date": (a.finished_at or a.started_at).isoformat(timespec="minutes"),
+            "started_at": a.started_at.isoformat(timespec="minutes"),
+            "finished_at": a.finished_at.isoformat(timespec="minutes") if a.finished_at else None,
+            "total_ms": a.total_ms, "score": a.score, "grade": review.GRADES.get(a.grade),
+            "grade_manual": bool(a.grade_manual), "checks": a.checks, "ref_opened": bool(a.ref_opened),
+            "reviews": [review_short(r) for r in a.reviews]}
+
+
+def touch(a: Attempt):
+    a.touched_at = datetime.now()
 
 
 @router.post("/tasks/{tid}/attempts")
@@ -87,11 +124,7 @@ def get_attempt(aid: int, db=Depends(get_db)):
 @router.get("/tasks/{tid}/attempts")
 def list_attempts(tid: int, db=Depends(get_db)):
     rows = db.query(Attempt).filter_by(task_id=tid).order_by(Attempt.started_at.desc()).all()
-    return [{"id": a.id, "status": a.status, "started_at": a.started_at.isoformat(timespec="minutes"),
-             "finished_at": a.finished_at.isoformat(timespec="minutes") if a.finished_at else None,
-             "total_ms": a.total_ms, "score": a.score, "grade": review.GRADES.get(a.grade),
-             "grade_manual": bool(a.grade_manual), "checks": a.checks, "ref_opened": bool(a.ref_opened)}
-            for a in rows]
+    return [journal_row(a) for a in rows]
 
 
 class TimeIn(BaseModel):
@@ -102,6 +135,7 @@ class TimeIn(BaseModel):
 def save_time(aid: int, body: TimeIn, db=Depends(get_db)):
     a = active(db, aid)
     a.total_ms = max(a.total_ms, body.total_ms)
+    touch(a)
     db.commit()
     return {"ok": True}
 
@@ -118,6 +152,7 @@ def sync_files(db, a: Attempt):
             continue
         files[rel] = p.read_text(encoding="utf-8", errors="replace")
     a.files = json.dumps(files, ensure_ascii=False)
+    touch(a)
     db.commit()
 
 
@@ -180,7 +215,29 @@ def run_file(aid: int, body: RunIn, db=Depends(get_db)):
     a = active(db, aid)
     if not (adir(a) / body.path).is_file():
         raise HTTPException(404, "файла нет")
-    return {"job": runner.submit(**worker_args(a), cmd={"op": "run", "path": body.path}, timeout=a.task.timeout)}
+    touch(a)
+    db.commit()
+    return {"job": runner.submit(**worker_args(a), cmd={"op": "run", "path": body.path}, timeout=a.task.timeout,
+                                 on_done=lambda job: remember_output(aid, body.path, job))}
+
+
+def remember_output(aid: int, path: str, job):
+    """Вывод последнего «Запустить» — чтобы он был виден и в журнале у брошенной попытки."""
+    outs, size = [], 0
+    for o in job.outputs:
+        o = dict(o)
+        if o.get("type") == "stream":
+            o["text"] = o["text"][-20000:]
+        size += len(json.dumps(o, ensure_ascii=False))
+        if size > 400_000:
+            break
+        outs.append(o)
+    with SessionLocal() as db:
+        a = db.get(Attempt, aid)
+        if a:
+            a.last_output = json.dumps({"path": path, "outputs": outs, "result": job.result,
+                                        "at": datetime.now().isoformat(timespec="seconds")}, ensure_ascii=False)
+            db.commit()
 
 
 @router.post("/attempts/{aid}/exec")
@@ -227,6 +284,10 @@ def _check_job(aid: int, final: bool) -> str:
         except Exception as e:
             job.note(f"проверка упала: {e}\n")
             res = {"fatal": f"проверка упала: {e}", "tests": [], "passed": 0, "total": 0, "broken": 0}
+        with SessionLocal() as db:  # последний результат тестов — виден и у брошенной попытки
+            a = db.get(Attempt, aid)
+            a.last_check = json.dumps(res, ensure_ascii=False)
+            db.commit()
         if final:
             try:
                 checking.finish_submit(aid, res)
@@ -264,20 +325,36 @@ def submit(aid: int, body: TimeIn, db=Depends(get_db)):
     return {"job": _check_job(aid, final=True)}
 
 
+class AbandonIn(BaseModel):
+    total_ms: int = 0
+
+
 @router.post("/attempts/{aid}/abandon")
-def abandon(aid: int, db=Depends(get_db)):
-    a = active(db, aid)
+def abandon(aid: int, body: AbandonIn | None = None, db=Depends(get_db)):
+    """«Сбросить» или уход со страницы: попытка в историю как «брошена» с кодом всех файлов на этот
+    момент и временем. В FSRS — как «забыл»."""
+    a = load(db, aid)
+    if a.status != "active":
+        return {"ok": True, "status": a.status}  # повторный сигнал (например, при закрытии вкладки)
+    sync_files(db, a)
+    abandon_attempt(db, a, body.total_ms if body else 0)
+    runner.stop(f"a{aid}")
+    return {"ok": True, "status": a.status}
+
+
+def abandon_attempt(db, a: Attempt, total_ms: int = 0):
+    a.total_ms = max(a.total_ms, total_ms or 0)
     a.status = "abandoned"
     a.finished_at = datetime.now()
+    a.grade = a.grade_auto = 1
+    review.replay(db, a.task)
     db.commit()
-    runner.stop(f"a{aid}")
-    return {"ok": True}
 
 
 @router.post("/attempts/{aid}/reference")
 def open_reference(aid: int, db=Depends(get_db)):
     """Эталон. До сдачи — только с отметкой «открыт» (снижает оценку)."""
-    a = load(db, aid)
+    a = load(db, aid)  # у сданной и брошенной эталон открыт без штрафа
     if a.status == "active" and not a.ref_opened:
         a.ref_opened = 1
         db.commit()

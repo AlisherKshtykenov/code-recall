@@ -223,7 +223,8 @@ def get_worker(key: str, python: str, cwd: str, task_id: int) -> Worker:
         return w
 
 
-def submit(key: str, python: str, cwd: str, task_id: int, cmd: dict, timeout: float) -> str:
+def submit(key: str, python: str, cwd: str, task_id: int, cmd: dict, timeout: float, on_done=None) -> str:
+    """on_done(job) — после завершения (например, запомнить вывод у попытки)."""
     job = new_job(cmd.get("op", "run"))
 
     def go():
@@ -232,6 +233,11 @@ def submit(key: str, python: str, cwd: str, task_id: int, cmd: dict, timeout: fl
         except Exception as e:
             job.note(f"не удалось выполнить: {e}\n")
             job.finish({"status": "error", "ms": 0})
+        if on_done:
+            try:
+                on_done(job)
+            except Exception as e:
+                print("on_done:", e)
 
     threading.Thread(target=go, daemon=True).start()
     return job.id
