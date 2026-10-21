@@ -220,7 +220,9 @@ function expectedGot(message, text = "") {
   const first = (message || "").split("\n").find(l => /\bassert\b/.test(l));
   const m = first && first.match(/\bassert\s+(.+?)\s+(==|!=|>=|<=|<|>|is not|is|not in|in)\s+(.+)$/);
   if (m) return { got: m[1], op: m[2], expected: m[3] };
-  const c = (message + "\n" + text).match(/(?:isclose|allclose)[^(]*\((.+?), (.+?)\)\s*$/m);
+  // аргумент — число или tensor(…) без вложенных массивов: «isclose(tensor(6.33), tensor(4.33))»
+  const arg = "([^,()\\[\\]]+(?:\\([^()\\[\\]]*\\))?)";
+  const c = (message + "\n" + text).match(new RegExp(`(?:isclose|allclose)[^(]*\\(${arg}, ${arg}\\)\\s*$`, "m"));
   return c ? { got: c[1], op: "≈", expected: c[2] } : null;
 }
 
@@ -229,11 +231,12 @@ function testsHtml(check, opts = {}) {
   if (check.fatal && !check.tests?.length) return `<div class="err" style="padding:8px">${esc(check.fatal)}</div>`;
   const broken = check.broken ? ` · <span class="warn">${check.broken} сломан(о) на эталоне — не учитывается</span>` : "";
   const all = check.total && check.passed === check.total;
-  return `<div class="summary-bar"><b class="${all ? "ok" : "err"}">${check.passed}/${check.total} тестов прошли</b>${broken}
+  const bricks = (check.bricks || []).length ? `<div class="small" style="margin-top:4px">сначала кирпичики «пишу сам»: ${check.bricks.map(b => `<span class="${b.total && b.passed === b.total ? "ok" : "err"}">${esc(b.name)} ${b.passed}/${b.total}${b.total && b.passed === b.total ? " ✓" : " ✗ упал"}</span>`).join(" · ")}, потом тесты задачи</div>` : "";
+  return `<div class="summary-bar"><b class="${all ? "ok" : "err"}">${check.passed}/${check.total} тестов прошли</b>${broken}${bricks}
       ${check.ms != null ? `<span class="muted small">${(check.ms / 1000).toFixed(1)} с</span>` : ""}</div>`
     + check.tests.map(t => {
       const [cls, ico] = TEST_ICON[t.status] || ["muted", "?"];
-      return `<div class="test-row"><span class="${cls}">${ico}</span><span><b>${esc(t.name)}</b> <span class="muted small">${esc(t.file)}</span></span>
+      return `<div class="test-row"><span class="${cls}">${ico}</span><span>${t.brick ? `<span class="badge" title="${esc(t.brick_title || "")}">кирпичик ${esc(t.brick)}</span> ` : ""}<b>${esc(t.name)}</b> <span class="muted small">${esc(t.file)}</span></span>
         <span class="muted small">${t.time ? t.time.toFixed(2) + " с" : ""}</span>
         ${t.message ? `<div class="msg">${esc(t.message.split("\n").slice(0, 4).join("\n"))}</div>` : ""}
         ${(() => {

@@ -1,0 +1,12 @@
+{
+  "title": "MSE",
+  "kind": "ml",
+  "topic": "ML/Функции потерь",
+  "tags": [
+    "loss",
+    "кирпичик"
+  ],
+  "implements": "loss",
+  "main": "solution.py",
+  "timeout": 60
+}

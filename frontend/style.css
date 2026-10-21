@@ -324,3 +324,33 @@ ul.plain li.ok::before { background: var(--ok); } ul.plain li.ok { color: var(--
 .sem-del-glyph { background: var(--err); width: 4px !important; margin-left: 3px; }
 .sem-add-glyph { background: var(--warn); width: 4px !important; margin-left: 3px; }
 .sem-comment { opacity: .45; font-style: italic; }
+
+/* ---------- библиотека: дерево тем ---------- */
+.libgrid { display: grid; grid-template-columns: 270px 1fr; gap: 14px; align-items: start; }
+.libgrid.tree-hidden { grid-template-columns: 1fr; }
+.libgrid.tree-hidden .libtree { display: none; }
+.libtree { position: sticky; top: 70px; max-height: calc(100vh - 90px); overflow: auto; padding: 12px 8px; }
+.tnode { display: flex; align-items: center; gap: 4px; padding: 5px 8px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+.tnode:hover { background: var(--panel-2); }
+.tnode.sel { background: var(--panel-2); outline: 1px solid var(--accent); }
+.tnode.over { outline: 2px dashed var(--accent); }
+.tnode .caret { width: 14px; color: var(--muted); flex: none; }
+.tnode .tcount { color: var(--muted); font-size: 12px; }
+.tnode .tact { display: none; }
+.tnode:hover .tact { display: inline-flex; }
+.tnode .tact .icon-btn { padding: 0 4px; font-size: 12px; }
+tr[draggable="true"] { cursor: grab; }
+@media (max-width: 760px) { .libgrid { grid-template-columns: 1fr; } .libtree { position: static; max-height: 260px; } }
+
+/* ---------- граф «Состав» ---------- */
+.graph { position: relative; display: flex; flex-direction: column; gap: 34px; padding: 10px 0; overflow-x: auto; }
+.glevel { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; position: relative; z-index: 1; }
+.gnode { display: flex; flex-direction: column; gap: 2px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); min-width: 150px; color: var(--text); text-decoration: none; }
+.gnode:hover { border-color: var(--accent); }
+.gnode.me { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(255, 161, 22, .18); }
+.glines { position: absolute; inset: 0; pointer-events: none; z-index: 0; }
+.glines path { fill: none; stroke: var(--muted); stroke-width: 1.4; opacity: .6; }
+
+/* ---------- мастер ---------- */
+.opt { display: block; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; margin-bottom: 6px; cursor: pointer; }
+.opt.sel { border-color: var(--accent); }

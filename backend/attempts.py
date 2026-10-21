@@ -6,7 +6,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from . import checking, files_api, review, reviews, runner, taskfs
+from . import bricks, checking, files_api, review, reviews, runner, taskfs
 from .db import Attempt, SessionLocal, Task, TaskVersion
 
 router = APIRouter(prefix="/api")
@@ -59,7 +59,19 @@ def public(a: Attempt, db) -> dict:
             "score": a.score, "grade": a.grade, "grade_auto": a.grade_auto, "grade_manual": bool(a.grade_manual),
             "grade_name": review.GRADES.get(a.grade), "grades": review.GRADES, "report": rep,
             "due_at": t.due_at.date().isoformat() if t.due_at else None,
-            "data_link": taskfs.data_link(t.name), "worker": runner.state(f"a{a.id}")}
+            "data_link": taskfs.data_link(t.name), "worker": runner.state(f"a{a.id}"),
+            "assembly": json.loads(a.assembly or "{}"), "bricks": attempt_bricks(db, a, files)}
+
+
+def attempt_bricks(db, a: Attempt, files: dict) -> list[dict]:
+    """Кирпичики попытки: что пишу сам, что эталоном (скрыт), какая реализация слота."""
+    asm = json.loads(a.assembly or "{}")
+    try:
+        nodes = bricks.tree(db, a.task, asm, files)
+    except bricks.DepError as e:
+        return [{"error": str(e)}]
+    return [{"name": n["name"], "kind": n["kind"], "slot": n.get("slot"), "title": n["title"], "task_id": n["task_id"],
+             "module": n["module"], "source": bricks.source_of(asm, n), "depth": n["depth"]} for n in nodes]
 
 
 OUTCOME = {"active": "в процессе", "checking": "проверяется", "abandoned": "брошена",
@@ -95,8 +107,38 @@ def touch(a: Attempt):
     a.touched_at = datetime.now()
 
 
+def clean_assembly(db, t: Task, files: dict, assembly: dict | None) -> dict:
+    """Сборка только из известных зависимостей; «моя последняя версия» без такой версии -> эталон."""
+    out = {}
+    for n in bricks.tree(db, t, assembly or {}, files):
+        want = (assembly or {}).get(n["name"]) or {}
+        src = want.get("source", "ref")
+        if src == "last" and not bricks.last_good(db, db.get(Task, n["task_id"])):
+            src = "ref"
+        out[n["name"]] = {"source": src if src in bricks.SOURCES else "ref"}
+        if n["kind"] == "slot":
+            out[n["name"]]["impl"] = n["task_name"]
+    return out
+
+
+def prepare_dir(db, a: Attempt):
+    """Папка попытки = черновик: мои файлы в корне, скрытые кирпичики и slots/ — в .lib/."""
+    v = db.get(TaskVersion, a.version_id)
+    mine = json.loads(a.files)
+    taskfs.write_code(adir(a), mine)
+    try:
+        _, lib = bricks.assemble(db, a.task, json.loads(v.files), json.loads(a.assembly or "{}"), mine)
+    except bricks.DepError:
+        lib = {}
+    bricks.write_lib(adir(a), lib)
+
+
+class StartIn(BaseModel):
+    assembly: dict | None = None  # {имя зависимости: {source, impl}}; None — как в прошлый раз
+
+
 @router.post("/tasks/{tid}/attempts")
-def start_attempt(tid: int, db=Depends(get_db)):
+def start_attempt(tid: int, body: StartIn | None = None, db=Depends(get_db)):
     t = db.get(Task, tid)
     if t is None:
         raise HTTPException(404, "задача не найдена")
@@ -106,10 +148,22 @@ def start_attempt(tid: int, db=Depends(get_db)):
     v = t.current
     files = json.loads(v.files)
     start = taskfs.attempt_start_files(files, json.loads(v.roles or "{}"))
-    a = Attempt(task_id=t.id, version_id=v.id, files=json.dumps(start, ensure_ascii=False))
+    want = body.assembly if body and body.assembly is not None else json.loads(t.last_assembly or "{}")
+    try:
+        assembly = clean_assembly(db, t, files, want)
+        nodes = bricks.tree(db, t, assembly, files)
+    except bricks.DepError as e:
+        raise HTTPException(400, str(e))
+    for n in nodes:  # кирпичики «пишу сам» — файлы bricks/<имя>.py (заготовка кирпичика или пусто)
+        if assembly[n["name"]]["source"] == "self":
+            start[n["module"]] = bricks.brick_starter(db, n)
+    a = Attempt(task_id=t.id, version_id=v.id, files=json.dumps(start, ensure_ascii=False),
+                assembly=json.dumps(assembly, ensure_ascii=False))
+    if nodes:
+        t.last_assembly = a.assembly  # выбор запоминается («как в прошлый раз»)
     db.add(a)
     db.commit()
-    taskfs.write_code(adir(a), start)
+    prepare_dir(db, a)
     return public(a, db)
 
 
@@ -117,7 +171,7 @@ def start_attempt(tid: int, db=Depends(get_db)):
 def get_attempt(aid: int, db=Depends(get_db)):
     a = load(db, aid)
     if a.status == "active":
-        taskfs.write_code(adir(a), json.loads(a.files))  # папка совпадает с черновиком
+        prepare_dir(db, a)  # папка совпадает с черновиком
     return public(a, db)
 
 
@@ -148,7 +202,7 @@ def sync_files(db, a: Attempt):
     files = {}
     for p in sorted(base.rglob("*.py")):
         rel = p.relative_to(base).as_posix()
-        if rel.split("/")[0] in ("data", "results") or "__pycache__" in rel:
+        if rel.split("/")[0] in ("data", "results", ".lib") or "__pycache__" in rel:
             continue
         files[rel] = p.read_text(encoding="utf-8", errors="replace")
     a.files = json.dumps(files, ensure_ascii=False)
@@ -182,6 +236,8 @@ def reset_file(aid: int, body: ResetIn, db=Depends(get_db)):
     a = active(db, aid)
     v = db.get(TaskVersion, a.version_id)
     start = taskfs.attempt_start_files(json.loads(v.files), json.loads(v.roles or "{}"))
+    for n in bricks.tree(db, a.task, json.loads(a.assembly or "{}"), json.loads(v.files)):
+        start.setdefault(n["module"], bricks.brick_starter(db, n))
     if body.path not in start:
         raise HTTPException(400, "этого файла нет в задаче")
     files = json.loads(a.files)
@@ -352,8 +408,11 @@ def open_reference(aid: int, db=Depends(get_db)):
         db.commit()
     v = db.get(TaskVersion, a.version_id)
     files = json.loads(v.files)
-    return {"files": taskfs.reference_files(files), "tests": taskfs.test_files(files),
-            "roles": json.loads(v.roles or "{}")}
+    try:  # эталон кирпичиков «пишу сам» — тоже (bricks/<имя>.py); скрытые эталоном кирпичики не показываем
+        ref = bricks.reference_code(db, a.task, files, json.loads(a.assembly or "{}"))
+    except bricks.DepError:
+        ref = taskfs.reference_files(files)
+    return {"files": ref, "tests": taskfs.test_files(files), "roles": json.loads(v.roles or "{}")}
 
 
 class GradeIn(BaseModel):
@@ -379,7 +438,15 @@ def dev_args(t: Task) -> dict:
         py = taskfs.resolve_python(t.python)
     except ValueError as e:
         raise HTTPException(400, str(e))
-    return {"key": f"t{t.id}", "python": py, "cwd": str(taskfs.dev_dir(t.name)), "task_id": t.id}
+    d = taskfs.dev_dir(t.name)
+    with SessionLocal() as db:  # кирпичики-эталоны и slots/ — в .dev/.lib/
+        try:
+            files = taskfs.snapshot(t.name)
+            _, lib = bricks.assemble(db, db.get(Task, t.id), files, {}, taskfs.reference_files(files))
+        except bricks.DepError:
+            lib = {}
+    bricks.write_lib(d, lib)
+    return {"key": f"t{t.id}", "python": py, "cwd": str(d), "task_id": t.id}
 
 
 @router.post("/tasks/{tid}/run")
@@ -424,7 +491,13 @@ def task_check(tid: int, db=Depends(get_db)):
     def go():
         import shutil
         files = taskfs.snapshot(name)
-        d = taskfs.run_dir(name, taskfs.reference_files(files), taskfs.test_files(files))
+        with SessionLocal() as db:  # эталон + кирпичики-эталоны + контрактные тесты слота
+            try:
+                code, tests = checking.suite(db, db.get(Task, tid), files, {}, taskfs.reference_files(files))
+            except bricks.DepError as e:
+                job.finish({"status": "ok", "check": {"tests": [], "fatal": f"сборка не удалась: {e}", "passed": 0, "total": 0}})
+                return
+        d = taskfs.run_dir(name, code, tests)
         try:
             res = runner.run_pytest(py, d, timeout, job)
         finally:

@@ -1,0 +1,10 @@
+{
+  "title": "StandardScaler",
+  "kind": "ml",
+  "topic": "ML/Данные",
+  "tags": [
+    "numpy",
+    "кирпичик"
+  ],
+  "main": "solution.py"
+}

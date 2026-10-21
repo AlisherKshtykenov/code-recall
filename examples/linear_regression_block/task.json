@@ -1,0 +1,17 @@
+{
+  "title": "LinearRegression (torch)",
+  "kind": "ml",
+  "topic": "ML/Линейные модели",
+  "tags": [
+    "torch",
+    "кирпичик"
+  ],
+  "main": "model.py",
+  "deps": [
+    {
+      "name": "loss",
+      "slot": "loss"
+    }
+  ],
+  "timeout": 90
+}

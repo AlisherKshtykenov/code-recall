@@ -1,0 +1,26 @@
+{
+  "title": "Линейная регрессия на практике",
+  "kind": "ml",
+  "topic": "ML/Линейные модели",
+  "tags": [
+    "стена",
+    "pandas",
+    "torch"
+  ],
+  "main": "pipeline.py",
+  "timeout": 120,
+  "deps": [
+    {
+      "name": "split",
+      "task": "train_test_split"
+    },
+    {
+      "name": "scaler",
+      "task": "standard_scaler"
+    },
+    {
+      "name": "model",
+      "task": "linear_regression_block"
+    }
+  ]
+}

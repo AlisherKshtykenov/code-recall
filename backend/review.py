@@ -5,7 +5,10 @@
 import math
 from datetime import datetime, timedelta
 
-from .db import Attempt, ReviewSession, Task
+import json
+from types import SimpleNamespace
+
+from .db import Attempt, BrickEvent, ReviewSession, Task
 
 GRADES = {1: "забыл", 2: "трудно", 3: "нормально", 4: "легко"}
 THRESHOLDS = [(90, 4), (70, 3), (50, 2), (0, 1)]
@@ -49,6 +52,10 @@ def replay(db, task: Task):
     rows = (db.query(Attempt).filter(Attempt.task_id == task.id, Attempt.status.in_(("submitted", "abandoned")),
                                      Attempt.grade.isnot(None), Attempt.finished_at.isnot(None))
             .order_by(Attempt.finished_at).all())
+    # кирпичик, написанный внутри составной задачи, — тоже повторение кирпичика («нормально» / «забыл»)
+    rows += [SimpleNamespace(grade=e.grade, finished_at=e.at, brick_failed=not e.passed)
+             for e in db.query(BrickEvent).filter_by(task_id=task.id).all()]
+    rows.sort(key=lambda x: x.finished_at)
     sessions = (db.query(ReviewSession).filter(ReviewSession.task_id == task.id,
                                                ReviewSession.status.in_(("passed", "failed")))
                 .order_by(ReviewSession.finished_at).all())
@@ -64,6 +71,8 @@ def replay(db, task: Task):
     task.fsrs_s, task.fsrs_d, task.last_review = state["s"], state["d"], last
     days = max(1, round(interval_days(state["s"])))
     task.due_at = datetime.combine((last + timedelta(days=days)).date(), datetime.min.time())
+    if getattr(rows[-1], "brick_failed", False):  # кирпичик упал внутри составной задачи — повторить его сегодня
+        task.due_at = datetime.combine(last.date(), datetime.min.time())
     after = [s for s in sessions if s.finished_at > last]
     if after:  # последнее событие — работа над ошибками: её итог задаёт дату повтора
         s = after[-1]
@@ -82,6 +91,24 @@ def task_status(t: Task) -> str:
     return "due" if t.due_at.date() <= datetime.now().date() else "solved"
 
 
+def weak_bricks(db, t: Task, by_name: dict, today) -> list[str]:
+    """Прямые кирпичики составной задачи, которые сами пора повторить или которые в последний раз упали."""
+    from . import bricks  # bricks -> db; review импортируется раньше bricks, поэтому здесь
+    try:
+        nodes = bricks.tree(db, t, json.loads(t.last_assembly or "{}"))
+    except bricks.DepError:
+        return []
+    out = []
+    for n in nodes:
+        if n["depth"] != 0:
+            continue
+        b = db.get(Task, n["task_id"])
+        last_ev = db.query(BrickEvent).filter_by(task_id=b.id).order_by(BrickEvent.at.desc()).first()
+        if (b.due_at and b.due_at.date() <= today) or (last_ev and not last_ev.passed):
+            out.append(b.title)
+    return out
+
+
 def today_lists(db) -> dict:
     today = datetime.now().date()
     overdue, due, new, upcoming, reviews = [], [], [], [], []
@@ -90,10 +117,18 @@ def today_lists(db) -> dict:
         reviews.append({"id": r.id, "task_id": t.id, "title": t.title, "kind": t.kind, "tag": t.tag, "step": r.step,
                         "attempt_id": r.attempt_id, "started_at": r.started_at.isoformat(timespec="minutes"),
                         "reason": f"работа над ошибками не закончена: шаг {r.step} из 3"})
-    for t in db.query(Task).all():
+    events = {}
+    for e in db.query(BrickEvent).order_by(BrickEvent.at).all():
+        events.setdefault(e.task_id, []).append(e)
+    tasks = db.query(Task).all()
+    by_name = {t.name: t for t in tasks}
+    for t in tasks:
         done = sorted((a for a in t.attempts if a.status in ("submitted", "abandoned") and a.grade is not None),
                       key=lambda a: a.finished_at)
         last = done[-1] if done else None
+        ev = events.get(t.id, [])
+        if ev and (not last or ev[-1].at > last.finished_at):
+            last = SimpleNamespace(finished_at=ev[-1].at, grade=ev[-1].grade, score=None, status="brick", event=ev[-1])
         item = {"id": t.id, "title": t.title, "kind": t.kind, "tag": t.tag,
                 "due_at": t.due_at.date().isoformat() if t.due_at else None,
                 "best_score": max((a.score for a in done if a.score is not None), default=None),
@@ -106,7 +141,11 @@ def today_lists(db) -> dict:
         ago = (today - last.finished_at.date()).days
         lastrev = max((rv for at in t.attempts for rv in at.reviews if rv.status in ("passed", "failed")),
                       key=lambda r: r.finished_at, default=None)
-        if lastrev and lastrev.finished_at > last.finished_at:
+        if last.status == "brick":
+            parent = db.get(Task, last.event.parent_task_id)
+            reason = (f"{t.title}: ошибка в задаче «{parent.title if parent else '?'}»" + (f" — {last.event.note}" if last.event.note else "")
+                      if not last.event.passed else f"написан в задаче «{parent.title if parent else '?'}» — тесты прошли")
+        elif lastrev and lastrev.finished_at > last.finished_at:
             reason = ("работа над ошибками пройдена — закрепляем на следующий день" if lastrev.status == "passed"
                       else "работа над ошибками не пройдена — повторить сегодня")
         elif last.status == "abandoned":
@@ -115,6 +154,11 @@ def today_lists(db) -> dict:
             reason = f"прошлый раз ошибся: «{GRADES[last.grade]}», оценка {last.score}"
         else:
             reason = f"давно не повторял: {ago} дн."
+        weak = weak_bricks(db, t, by_name, today)
+        if weak:
+            reason += " · сначала повтори кирпичик " + ", ".join(f"«{w}»" for w in weak)
+        if t.broken:
+            reason += f" · сломано зависимостью: {t.broken}"
         d = t.due_at.date()
         if d < today:
             item["reason"] = f"просрочено на {(today - d).days} дн. · {reason}"

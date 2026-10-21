@@ -9,7 +9,7 @@ from fastapi import Depends, FastAPI, HTTPException, Response, UploadFile
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import attempts, backup, checking, llm, review, reviews, runner, semantic, stats, tasks
+from . import attempts, backup, checking, library, llm, review, reviews, runner, semantic, stats, tasks
 from .db import Attempt, ReviewSession, SessionLocal, Task, get_setting, init_db, set_setting
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -32,6 +32,15 @@ async def lifespan(app):
 
 
 app = FastAPI(title="CODE RECALL", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def no_stale_html(request, call_next):
+    """index.html — всегда свежая (в ней версии скриптов ?v=N), сами скрипты кэшируются по версии."""
+    resp = await call_next(request)
+    if request.url.path in ("/", "/index.html"):
+        resp.headers["Cache-Control"] = "no-cache"
+    return resp
 STALE_HOURS = 2
 
 
@@ -165,6 +174,7 @@ def test_llm():
         return {"ok": False, "answer": str(e)}
 
 
+app.include_router(library.router)
 app.include_router(tasks.router)
 app.include_router(tasks.file_router)
 app.include_router(attempts.router)

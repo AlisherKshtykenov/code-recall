@@ -1,0 +1,8 @@
+{
+  "name": "loss",
+  "symbol": "loss",
+  "title": "Функция потерь",
+  "signature": "def loss(y_pred: torch.Tensor, y: torch.Tensor) -> torch.Tensor  # скаляр",
+  "description": "Функция потерь регрессии: принимает предсказания и ответы одной формы, возвращает скаляр (тензор без размерностей), дифференцируемый по y_pred.",
+  "default": "mse"
+}

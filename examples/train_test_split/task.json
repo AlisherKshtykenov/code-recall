@@ -1,0 +1,10 @@
+{
+  "title": "train_test_split",
+  "kind": "ml",
+  "topic": "ML/Данные",
+  "tags": [
+    "numpy",
+    "кирпичик"
+  ],
+  "main": "solution.py"
+}

@@ -9,8 +9,8 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
-from . import files_api, review, runner, taskfs
-from .db import SessionLocal, Task, TaskVersion
+from . import bricks, files_api, review, runner, taskfs
+from .db import SessionLocal, Task, TaskVersion, Topic
 
 router = APIRouter(prefix="/api")
 
@@ -63,6 +63,38 @@ def apply_meta(task: Task, meta: dict):
         task.timeout = max(5, meta["timeout"])
     if isinstance(meta.get("main"), str):
         task.main_file = meta["main"]
+    if isinstance(meta.get("tags"), list):
+        task.tags = json.dumps([str(x) for x in meta["tags"]], ensure_ascii=False)
+
+
+def topic_path(db, path: str) -> int | None:
+    """«ML/Линейные модели» -> id узла (недостающие узлы создаются)."""
+    parent = None
+    for part in [p.strip() for p in str(path).split("/") if p.strip()]:
+        node = db.query(Topic).filter_by(name=part, parent_id=parent).first()
+        if node is None:
+            node = Topic(name=part, parent_id=parent)
+            db.add(node)
+            db.flush()
+        parent = node.id
+    return parent
+
+
+def place(db, task: Task, meta: dict):
+    """Узел дерева: из task.json ("topic": "ML/Линейные модели"), иначе — по старой теме или типу."""
+    if meta.get("topic"):
+        task.topic_id = topic_path(db, meta["topic"])
+    elif task.topic_id is None:
+        task.topic_id = topic_path(db, task.tag or ("Алгоритмы" if task.kind == "algo" else "ML"))
+
+
+def deps_ok(db, task: Task, files: dict) -> str:
+    """Пусто — зависимости разрешимы и без циклов; иначе текст ошибки."""
+    try:
+        bricks.check_cycles(db, task, files)
+        return ""
+    except bricks.DepError as e:
+        return str(e)
 
 
 def version_out(v: TaskVersion) -> dict:
@@ -84,6 +116,37 @@ def group_upload(paths: list[str]) -> dict:
     return groups
 
 
+def order_upload(groups: dict) -> dict:
+    """Слоты — первыми, кирпичики — раньше задач, которые на них ссылаются (по имени папки)."""
+    return dict(sorted(groups.items(), key=lambda kv: (0 if any(r == "slot.json" for _, r in kv[1]) else 1)))
+
+
+def dep_order(batch: dict) -> list:
+    """Папки задач в порядке зависимостей внутри загрузки."""
+    names = {taskfs.slug(f): f for f in batch}
+    done, out = set(), []
+
+    def visit(f, stack=()):
+        if f in done or f in stack:
+            return
+        for d in bricks.deps_of(batch[f]["text"]):
+            if d["task"] and taskfs.slug(d["task"]) in names:
+                visit(names[taskfs.slug(d["task"])], stack + (f,))
+            if d["slot"]:  # реализации слота из этой же загрузки — раньше
+                for g in batch:
+                    if bricks.implements_of(batch[g]["text"]) == d["slot"]:
+                        visit(g, stack + (f,))
+        done.add(f)
+        out.append(f)
+    for f in batch:
+        if "slot.json" in batch[f]["text"]:
+            done.add(f)
+            out.append(f)
+    for f in batch:
+        visit(f)
+    return out
+
+
 async def read_upload(files, paths):
     if len(paths) != len(files):
         raise HTTPException(400, "пути и файлы не совпадают")
@@ -91,7 +154,7 @@ async def read_upload(files, paths):
     if not groups:
         raise HTTPException(400, "перетащите папку задачи (в ней reference/ и tests/), а не отдельные файлы")
     out = {}
-    for folder, items in groups.items():
+    for folder, items in order_upload(groups).items():
         text, data, skipped = {}, [], []
         for i, rel in items:
             if rel.startswith(("results/", ".")) or "/__pycache__/" in f"/{rel}" or "/." in rel:
@@ -100,7 +163,7 @@ async def read_upload(files, paths):
                 rel = "description.md"
             if rel.startswith("data/"):
                 data.append((i, rel))
-            elif taskfs.is_version_file(rel):
+            elif taskfs.is_version_file(rel) or rel == "slot.json":
                 raw = await files[i].read()
                 try:
                     text[rel] = raw.decode("utf-8")
@@ -124,6 +187,9 @@ async def upload_preview(files: list[UploadFile], paths: list[str] = Form(...), 
         name = taskfs.slug(folder)
         text = g["text"]
         item = {"folder": folder, "name": name, "data_files": len(g["data"]), "skipped": g["skipped"][:20]}
+        if "slot.json" in text:
+            res.append({**item, "status": "slot", "tests": len(taskfs.test_files(text))})
+            continue
         if not taskfs.reference_files(text):
             res.append({**item, "status": "error", "error": "нет reference/*.py — эталона"})
             continue
@@ -148,8 +214,14 @@ async def upload_preview(files: list[UploadFile], paths: list[str] = Form(...), 
 async def upload(files: list[UploadFile], paths: list[str] = Form(...), db=Depends(get_db)):
     """Сохранить: новая задача или новая версия существующей. Файлы из data/ кладутся в data/ задачи."""
     results = []
-    for folder, g in (await read_upload(files, paths)).items():
+    batch = await read_upload(files, paths)
+    for folder in dep_order(batch):
+        g = batch[folder]
         name, text = taskfs.slug(folder), g["text"]
+        if "slot.json" in text:
+            from . import library
+            results.append(library.upload_slot(db, folder, text))
+            continue
         if not taskfs.reference_files(text):
             results.append({"folder": folder, "status": "error", "error": "нет reference/*.py"})
             continue
@@ -159,6 +231,13 @@ async def upload(files: list[UploadFile], paths: list[str] = Form(...), db=Depen
             task = Task(name=name, title=folder.replace("_", " "), kind="ml" if g["data"] else "algo")
             db.add(task)
         apply_meta(task, meta)
+        db.flush()
+        err = deps_ok(db, task, text) if bricks.deps_of(text) else ""
+        if err:
+            db.rollback()
+            results.append({"folder": folder, "status": "error", "error": err})
+            continue
+        place(db, task, meta)
         status = commit_version(db, task, text)
         db.flush()
         taskfs.materialize(name, text)
@@ -173,7 +252,14 @@ async def upload(files: list[UploadFile], paths: list[str] = Form(...), db=Depen
         db.commit()
         results.append({"folder": folder, "status": status, "id": task.id, "version": task.current.number,
                         "data_files": len(g["data"])})
+        if status == "new_version":
+            recheck_dependents_later(task.id)
     return results
+
+
+def recheck_dependents_later(tid: int):
+    from . import library  # library -> checking -> … ; импорт здесь, чтобы не было цикла
+    library.recheck_dependents_later(tid)
 
 
 class NewTask(BaseModel):
@@ -221,7 +307,10 @@ def task_short(t: Task) -> dict:
             "best_time_ms": min((a.total_ms for a in done), default=None),
             "last_attempt": iso(max((a.finished_at for a in done), default=None)),
             "active_attempt": next((a.id for a in reversed(t.attempts) if a.status == "active"), None),
-            "due_at": iso(t.due_at), "status": review.task_status(t), "updated_at": iso(t.updated_at)}
+            "due_at": iso(t.due_at), "status": review.task_status(t), "updated_at": iso(t.updated_at),
+            "topic_id": t.topic_id, "tags": json.loads(t.tags or "[]"), "broken": t.broken or "",
+            "implements": bricks.implements_of(files), "deps": bricks.deps_of(files),
+            "type": "composite" if bricks.deps_of(files) else "slot" if bricks.implements_of(files) else "plain"}
 
 
 @router.get("/tasks")
@@ -255,6 +344,8 @@ class TaskMeta(BaseModel):
     python: str | None = None
     timeout: int | None = None
     main_file: str | None = None
+    topic_id: int | None = None
+    tags: list[str] | None = None
 
 
 @router.patch("/tasks/{tid}")
@@ -272,6 +363,10 @@ def update_task(tid: int, meta: TaskMeta, db=Depends(get_db)):
         raise HTTPException(400, "тип: algo или ml")
     if "timeout" in data:
         data["timeout"] = max(5, min(24 * 3600, data["timeout"]))
+    if "tags" in data:
+        data["tags"] = json.dumps(sorted({x.strip() for x in data["tags"] if x.strip()}), ensure_ascii=False)
+    if "topic_id" in data and not db.get(Topic, data["topic_id"]):
+        raise HTTPException(400, "нет такого узла")
     for k, val in data.items():
         setattr(t, k, val)
     db.commit()
@@ -318,11 +413,17 @@ def save_version(tid: int, db=Depends(get_db)):
     files = taskfs.snapshot(t.name)
     if not taskfs.reference_files(files):
         raise HTTPException(400, "в reference/ нет ни одного .py")
+    err = deps_ok(db, t, files)
+    if err:
+        raise HTTPException(400, err)
     apply_meta(t, taskfs.read_meta(files))
+    place(db, t, taskfs.read_meta(files))
     roles = json.loads(t.current.roles or "{}")
     roles = {f: roles.get(f, "write") for f in taskfs.reference_files(files)}
     status = commit_version(db, t, files, roles)
     db.commit()
+    if status == "new_version":
+        recheck_dependents_later(t.id)
     return {"status": status, "version": t.current.number}
 
 

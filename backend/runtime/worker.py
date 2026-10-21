@@ -88,12 +88,21 @@ def sync_output():
 CWD = os.getcwd()
 if CWD not in sys.path:
     sys.path.insert(0, CWD)
+# .lib/ — скрытые кирпичики-эталоны и slots/ (bricks и slots — namespace-пакеты: части из корня и из .lib/ сливаются)
+LIB = os.path.join(CWD, ".lib")
+if LIB not in sys.path:
+    sys.path.insert(1, LIB)
 USER = {"__name__": "__main__", "__builtins__": __builtins__}
 
 
 def purge_task_modules():
     """Модули из папки задачи выгружаем перед запуском — правки в model.py видны сразу."""
+    import importlib
+    importlib.invalidate_caches()  # новые файлы bricks/ и .lib/ видны без перезапуска
     for name, mod in list(sys.modules.items()):
+        if name.split(".")[0] in ("bricks", "slots"):
+            del sys.modules[name]
+            continue
         f = getattr(mod, "__file__", None) or ""
         if f and os.path.abspath(f).startswith(CWD + os.sep) and name not in ("__main__",):
             del sys.modules[name]

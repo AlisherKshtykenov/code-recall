@@ -17,7 +17,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from . import checking, files_api, review, runner, semantic, taskfs
+from . import bricks, checking, files_api, review, runner, semantic, taskfs
 from .db import Attempt, ReviewSession, SessionLocal, TaskVersion
 
 router = APIRouter(prefix="/api")
@@ -55,6 +55,38 @@ def version_files(db, r):
     return json.loads(v.files), json.loads(v.roles or "{}")
 
 
+def asm(r) -> dict:
+    return json.loads(r.attempt.assembly or "{}")
+
+
+def ref_all(db, r) -> dict:
+    """Эталон всего, что можно переписывать: свои файлы и кирпичики «пишу сам» из сборки попытки."""
+    files, _ = version_files(db, r)
+    try:
+        return bricks.reference_code(db, r.attempt.task, files, asm(r))
+    except bricks.DepError:
+        return taskfs.reference_files(files)
+
+
+def brick_label(db, r, path: str) -> str:
+    """bricks/split.py -> «кирпичик split (Train/test split)»."""
+    if not path.startswith("bricks/"):
+        return ""
+    files, _ = version_files(db, r)
+    try:
+        n = bricks.brick_of(db, r.attempt.task, files, asm(r)).get(path)
+    except bricks.DepError:
+        n = None
+    return f"кирпичик {n['name']} ({n['title']})" if n else ""
+
+
+def run_code(db, r, work_text: str) -> dict:
+    """Код для запуска и тестов: переписываемый файл — из редактора, остальное — эталон."""
+    code = ref_all(db, r)
+    code[current_file(r)] = work_text
+    return code
+
+
 def current_file(r) -> str:
     files = json.loads(r.files)
     return files[min(r.idx, len(files) - 1)]
@@ -63,19 +95,21 @@ def current_file(r) -> str:
 def write_workdir(db, r: ReviewSession):
     """Рабочая папка шагов 2–3: переписываемый файл — из редактора, остальные — эталон."""
     files, _ = version_files(db, r)
-    code = dict(taskfs.reference_files(files))
-    work = json.loads(r.work or "{}")
-    target = current_file(r)
-    code[target] = work.get(target, "")
+    code = run_code(db, r, json.loads(r.work or "{}").get(current_file(r), ""))
+    try:
+        code, lib = bricks.assemble(db, r.attempt.task, files, asm(r), code)
+    except bricks.DepError:
+        lib = {}
     taskfs.write_code(rdir(r), code)
+    bricks.write_lib(rdir(r), lib)
 
 
 def public(db, r: ReviewSession) -> dict:
     files, roles = version_files(db, r)
     a, t = r.attempt, r.attempt.task
     target = current_file(r)
-    ref = taskfs.reference_files(files)
-    out = {"id": r.id, "attempt_id": a.id, "task_id": t.id, "title": t.title, "kind": t.kind,
+    ref = ref_all(db, r)
+    out = {"id": r.id, "brick": brick_label(db, r, target), "attempt_id": a.id, "task_id": t.id, "title": t.title, "kind": t.kind,
            "description": files.get("description.md", ""), "status": r.status, "step": r.step,
            "step_name": STEPS.get(r.step), "files": json.loads(r.files), "idx": r.idx, "file": target,
            "roles": roles, "all_files": sorted(ref), "peeked": bool(r.peeked), "peeks": r.peeks or 0, "checks": r.checks,
@@ -111,9 +145,9 @@ MAX_RUNS = 80
 
 def slim_check(res: dict) -> dict:
     """Результат тестов для хранения: по каждому тесту — статус, сообщение, traceback."""
-    keep = ("passed", "total", "broken", "fatal", "timeout", "ms", "checked_at")
+    keep = ("passed", "total", "broken", "fatal", "timeout", "ms", "checked_at", "bricks")
     out = {k: res.get(k) for k in keep}
-    out["tests"] = [{k: t.get(k) for k in ("id", "name", "file", "status", "message", "time")} | {"text": (t.get("text") or "")[-8000:]}
+    out["tests"] = [{k: t.get(k) for k in ("id", "name", "file", "status", "message", "time", "brick", "brick_title")} | {"text": (t.get("text") or "")[-8000:]}
                     for t in res.get("tests", [])]
     return out
 
@@ -154,6 +188,8 @@ def reason(r: ReviewSession) -> str:
     last = log[-1] if log else {"step": r.step, "file": current_file(r), "peeked": r.peeked}
     files = json.loads(r.files)
     where = f"шаг {last['step']}" + (f", {last['file']}" if len(files) > 1 else "")
+    if last.get("file", "").startswith("bricks/"):
+        where = f"шаг {last['step']}, кирпичик {last['file'][7:-3]}"
     run = last_check(r, last["step"], last.get("file"))
     fail = first_failure(run["check"]) if run else ""
     if r.status == "abandoned":
@@ -185,8 +221,10 @@ def start(aid: int, body: StartIn, db=Depends(get_db)):
     if open_:
         return public(db, open_)  # незакрытая работа — продолжаем её
     v = db.get(TaskVersion, a.version_id)
-    roles = json.loads(v.roles or "{}")
-    written = sorted(f for f in taskfs.reference_files(json.loads(v.files)) if roles.get(f, "write") == "write")
+    try:
+        written = bricks.written_paths(db, a.task, json.loads(v.files), json.loads(a.assembly or "{}"))
+    except bricks.DepError as e:
+        raise HTTPException(400, str(e))
     files = [f for f in (body.files or written) if f in written]
     if not files:
         raise HTTPException(400, "нет файлов «пишу сам»")
@@ -231,13 +269,13 @@ def next_step(db, r: ReviewSession):
 def report(rid: int, db=Depends(get_db)):
     """Полный отчёт: по каждому файлу и шагу — время, подглядывания, история прогонов с кодом, тестами и выводом."""
     r = load(db, rid)
-    files, _ = version_files(db, r)
-    ref = taskfs.reference_files(files)
+    ref = ref_all(db, r)
     runs = json.loads(r.runs or "[]")
     log = json.loads(r.log or "[]")
     out = public(db, r)
     out.update(runs=runs, log=log, reason=reason(r), details=bool(runs) or any("code" in x for x in log),
-               references={f: ref.get(f, "") for f in json.loads(r.files)})
+               references={f: ref.get(f, "") for f in json.loads(r.files)},
+               bricks={f: brick_label(db, r, f) for f in json.loads(r.files) if f.startswith("bricks/")})
     if r.status == "active":  # незакрытый шаг — тоже в отчёт, с текущим кодом
         target = current_file(r)
         out["open_step"] = {"file": target, "step": r.step, "peeked": bool(r.peeked), "peeks": r.peeks or 0, "checks": r.checks,
@@ -296,21 +334,20 @@ def check(rid: int, db=Depends(get_db)):
     def go():
         with SessionLocal() as db2:
             rr = db2.get(ReviewSession, rid)
-            files, _ = version_files(db2, rr)
             task = rr.attempt.task
-            code = dict(taskfs.reference_files(files))
-            code[current_file(rr)] = json.loads(rr.work or "{}").get(current_file(rr), "")
+            code = run_code(db2, rr, json.loads(rr.work or "{}").get(current_file(rr), ""))
+            assembly = asm(rr)
             python = taskfs.resolve_python(task.python)
             version = db2.get(TaskVersion, rr.version_id)
         try:
-            res = checking.run_tests(task, version, code, python, job)
+            res = checking.run_tests(task, version, code, python, job, assembly)
         except Exception as e:
             res = {"fatal": f"проверка упала: {e}", "tests": [], "passed": 0, "total": 0, "broken": 0}
         ok = bool(res.get("total")) and res["passed"] == res["total"]
         with SessionLocal() as db2:
             rr = db2.get(ReviewSession, rid)
             target = current_file(rr)
-            ref_code = taskfs.reference_files(version_files(db2, rr)[0]).get(target, "")
+            ref_code = ref_all(db2, rr).get(target, "")
             mine = code.get(target, "")
             add_run(rr, {"kind": "check", "code": {target: mine}, "check": slim_check(res),
                          "outputs": runner.outputs_snapshot(job, tail=12000, limit=120_000),

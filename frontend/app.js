@@ -5,7 +5,7 @@ let current = null;  // открытая IDE — закрываем при ух�
 $("#theme").onclick = () => setTheme(theme() === "dark" ? "light" : "dark");
 
 const routes = { today: viewToday, tasks: viewTasks, task: viewTask, attempt: viewAttempt, edit: viewEdit,
-                 journal: viewJournal, review: viewReview, stats: viewStats, settings: viewSettings };
+                 journal: viewJournal, review: viewReview, stats: viewStats, settings: viewSettings, assemble: viewAssemble };
 let lastHash = location.hash, skipRoute = false;
 function route() {
   if (skipRoute) { skipRoute = false; return; }
@@ -18,7 +18,7 @@ function route() {
   lastHash = location.hash;
   if (current) { current.dispose(); current = null; }
   const [name, ...args] = location.hash.replace(/^#\/?/, "").split("/");
-  const nav = { task: "tasks", attempt: "journal", edit: "tasks", review: "journal" }[name] || name || "today";
+  const nav = { task: "tasks", attempt: "journal", edit: "tasks", review: "journal", assemble: "tasks" }[name] || name || "today";
   $$(".topbar nav a").forEach(a => a.classList.toggle("active", a.dataset.r === nav));
   document.body.classList.remove("ide-mode");
   view.innerHTML = '<div class="muted spinner">загрузка</div>';
@@ -33,6 +33,8 @@ const kindBadge = k => `<span class="badge ${k}">${KIND[k] || k}</span>`;
 
 async function startAttempt(taskId) {
   try {
+    const t = await api(`/api/tasks/${taskId}`);
+    if (t.deps.length && !t.active_attempt) { location.hash = `#/assemble/${taskId}`; return; }  // составная — сначала сборка
     const a = await api(`/api/tasks/${taskId}/attempts`, { method: "POST" });
     location.hash = `#/attempt/${a.id}`;
   } catch (e) { toast(e.message, true); }
@@ -70,58 +72,69 @@ async function viewToday() {
 }
 
 // ---------------- Задачи (как список задач LeetCode) ----------------
-const lib = { q: "", kind: "", status: "", tag: "", sort: "title", dir: 1 };
+const lib = { q: "", kind: "", status: "", tags: [], topic: undefined, sort: "title", dir: 1 };
 async function viewTasks() {
-  const tasks = await api("/api/tasks");
-  const tags = [...new Set(tasks.map(t => t.tag).filter(Boolean))].sort();
-  const cols = [["status", ""], ["title", "Название"], ["kind", "Тип"], ["tag", "Тема"], ["best_score", "Лучшая оценка"], ["attempts", "Попыток"], ["due_at", "Повтор"]];
+  const [tasks, topics] = await Promise.all([api("/api/tasks"), api("/api/topics")]);
+  lib.topic ??= store.get("lib.topic", null);
+  if (lib.topic != null && !topics.some(t => t.id === lib.topic)) lib.topic = null;
+  const allTags = [...new Set(tasks.flatMap(t => t.tags))].sort();
+  const cols = [["status", ""], ["title", "Название"], ["kind", "Тип"], ["topic", "Узел"], ["best_score", "Лучшая оценка"], ["attempts", "Попыток"], ["due_at", "Повтор"]];
+  tasks.forEach(t => { t.topic = topicPath(topics, t.topic_id); });
   view.innerHTML = `
-    <div class="row" style="margin-bottom:14px"><h1 style="margin:0">Задачи</h1><span class="muted">${tasks.length}</span><span class="grow"></span>
+    <div class="row" style="margin-bottom:14px"><h1 style="margin:0">Библиотека</h1><span class="muted">${tasks.length}</span><span class="grow"></span>
       <button id="new">＋ Новая задача</button><button class="primary" id="upload">⇪ Загрузить папки</button></div>
-    <div class="card">
-      <div class="row" style="margin-bottom:10px">
-        <input id="q" placeholder="Поиск задач" value="${esc(lib.q)}" style="min-width:220px">
-        <select id="f-kind"><option value="">Все типы</option><option value="algo" ${lib.kind === "algo" ? "selected" : ""}>Алгоритм</option><option value="ml" ${lib.kind === "ml" ? "selected" : ""}>ML</option></select>
-        <select id="f-status"><option value="">Любой статус</option>${Object.entries(STATUS).map(([k, v]) => `<option value="${k}" ${lib.status === k ? "selected" : ""}>${v[2]}</option>`).join("")}</select>
-        <select id="f-tag"><option value="">Все темы</option>${tags.map(t => `<option ${t === lib.tag ? "selected" : ""}>${esc(t)}</option>`).join("")}</select>
-      </div>
-      <div class="scroll-x"><table><thead><tr>${cols.map(([k, n]) => `<th class="sort" data-k="${k}">${n}${lib.sort === k ? (lib.dir > 0 ? " ↑" : " ↓") : ""}</th>`).join("")}</tr></thead>
-        <tbody id="rows"></tbody></table></div>
-      ${tasks.length ? "" : '<div class="empty">Задач пока нет. Перетащите папку задачи (reference/, tests/, description.md) — например из examples/.</div>'}
-    </div>`;
+    <div class="libgrid ${store.get("lib.treeHidden", false) ? "tree-hidden" : ""}" id="libgrid">
+      <div class="card libtree" id="tree"></div>
+      <div class="card" style="min-width:0">
+        <div class="row" style="margin-bottom:10px">
+          <button class="icon-btn" id="tree-toggle" title="показать / скрыть дерево тем">☰</button>
+          <input id="q" placeholder="Поиск задач" value="${esc(lib.q)}" style="min-width:200px">
+          <select id="f-kind"><option value="">Все типы</option><option value="algo" ${lib.kind === "algo" ? "selected" : ""}>Алгоритм</option><option value="ml" ${lib.kind === "ml" ? "selected" : ""}>ML</option></select>
+          <select id="f-status"><option value="">Любой статус</option>${Object.entries(STATUS).map(([k, v]) => `<option value="${k}" ${lib.status === k ? "selected" : ""}>${v[2]}</option>`).join("")}</select>
+        </div>
+        ${allTags.length ? `<div class="row" style="margin-bottom:10px;flex-wrap:wrap"><span class="muted small">теги:</span>${allTags.map(g => `<button class="small ${lib.tags.includes(g) ? "sel" : "ghost"}" data-tag="${esc(g)}">${esc(g)}</button>`).join("")}</div>` : ""}
+        <div class="scroll-x"><table><thead><tr>${cols.map(([k, n]) => `<th class="sort" data-k="${k}">${n}${lib.sort === k ? (lib.dir > 0 ? " ↑" : " ↓") : ""}</th>`).join("")}</tr></thead>
+          <tbody id="rows"></tbody></table></div>
+        ${tasks.length ? "" : '<div class="empty">Задач пока нет. Перетащите папку задачи (reference/, tests/, description.md) — например из examples/.</div>'}
+      </div></div>`;
   const rank = { due: 0, new: 1, solved: 2 };
+  let kids = {};
   const render = () => {
-    const rows = tasks.filter(t => (!lib.kind || t.kind === lib.kind) && (!lib.status || t.status === lib.status) && (!lib.tag || t.tag === lib.tag)
-        && (t.title + " " + t.name + " " + t.tag).toLowerCase().includes(lib.q.toLowerCase()))
+    const inTopic = lib.topic == null ? null : new Set(subtreeIds(kids, lib.topic));
+    const rows = tasks.filter(t => (!lib.kind || t.kind === lib.kind) && (!lib.status || t.status === lib.status)
+        && (!inTopic || inTopic.has(t.topic_id)) && lib.tags.every(g => t.tags.includes(g))
+        && (t.title + " " + t.name + " " + t.topic + " " + t.tags.join(" ")).toLowerCase().includes(lib.q.toLowerCase()))
       .sort((a, b) => {
         let x = a[lib.sort], y = b[lib.sort];
         if (lib.sort === "status") { x = rank[x]; y = rank[y]; }
         if (x == null) return 1; if (y == null) return -1;
         return (typeof x === "string" ? x.localeCompare(y) : x - y) * lib.dir;
       });
-    $("#rows").innerHTML = rows.map(t => `<tr class="link" data-id="${t.id}">
+    $("#rows").innerHTML = rows.map(t => `<tr class="link" data-id="${t.id}" draggable="true" title="перетащите на узел дерева, чтобы перенести">
       <td style="width:28px">${statusCell(t.status)}</td>
-      <td><span class="title">${esc(t.title)}</span>${t.active_attempt ? ' <span class="badge warn">в процессе</span>' : ""}</td>
-      <td>${kindBadge(t.kind)}</td><td class="muted">${esc(t.tag || "—")}</td>
+      <td><span class="title">${esc(t.title)}</span>${t.active_attempt ? ' <span class="badge warn">в процессе</span>' : ""}
+        ${TYPE_BADGE[t.type] ? ` <span class="badge">${TYPE_BADGE[t.type][1]}${t.implements ? ` · ${esc(t.implements)}` : ""}</span>` : ""}
+        ${t.broken ? ` <span class="badge err" title="${esc(t.broken)}">сломано зависимостью</span>` : ""}
+        ${t.tags.length ? `<div class="muted small">${t.tags.map(g => "#" + esc(g)).join(" ")}</div>` : ""}</td>
+      <td>${kindBadge(t.kind)}</td><td class="muted small">${esc(t.topic || "—")}</td>
       <td>${t.best_score != null ? `<span class="${t.best_score >= 70 ? "ok" : t.best_score >= 50 ? "warn" : "err"}">${t.best_score}</span>` : '<span class="muted">—</span>'}</td>
       <td class="muted">${t.attempts}</td><td class="muted nowrap">${t.due_at ? t.due_at.slice(0, 10) : "—"}</td></tr>`).join("")
       || '<tr><td colspan="7" class="empty">ничего не найдено</td></tr>';
+    $$("#rows tr[data-id]").forEach(tr => tr.ondragstart = e => e.dataTransfer.setData("text/task", tr.dataset.id));
   };
+  // выбор узла — перерисовать дерево и таблицу; правка дерева (создать, перенести…) — перечитать всё
+  const onTree = (reload = true) => { if (reload) return viewTasks(); kids = renderTopicTree($("#tree"), topics, lib, onTree); render(); };
+  kids = renderTopicTree($("#tree"), topics, lib, onTree);
   render();
+  $("#tree-toggle").onclick = () => { const g = $("#libgrid"); g.classList.toggle("tree-hidden"); store.set("lib.treeHidden", g.classList.contains("tree-hidden")); };
+  $$("[data-tag]").forEach(b => b.onclick = () => { const g = b.dataset.tag; lib.tags = lib.tags.includes(g) ? lib.tags.filter(x => x !== g) : [...lib.tags, g]; viewTasks(); });
   $("#q").oninput = e => { lib.q = e.target.value; render(); };
   $("#f-kind").onchange = e => { lib.kind = e.target.value; render(); };
   $("#f-status").onchange = e => { lib.status = e.target.value; render(); };
-  $("#f-tag").onchange = e => { lib.tag = e.target.value; render(); };
   $$("th.sort").forEach(th => th.onclick = () => { lib.dir = lib.sort === th.dataset.k ? -lib.dir : 1; lib.sort = th.dataset.k; viewTasks(); });
   $("#rows").onclick = e => { const tr = e.target.closest("tr[data-id]"); if (tr) location.hash = `#/task/${tr.dataset.id}`; };
   $("#upload").onclick = uploadDialog;
-  $("#new").onclick = async () => {
-    const title = prompt("Название задачи");
-    if (!title) return;
-    const kind = confirm("Это ML-задача (данные, модели)? ОК — ML, Отмена — алгоритм") ? "ml" : "algo";
-    try { const r = await api("/api/tasks", { method: "POST", json: { title, kind } }); location.hash = `#/edit/${r.id}`; }
-    catch (e) { toast(e.message, true); }
-  };
+  $("#new").onclick = () => wizardDialog({ topic_id: lib.topic });
 }
 
 // Загрузка: перетащить папку задачи (или несколько) -> предпросмотр -> сохранить
@@ -152,7 +165,7 @@ function uploadDialog() {
     let res;
     try { res = await api("/api/tasks/upload/preview", { method: "POST", body: form(items) }); }
     catch (e) { pv.innerHTML = `<p class="err">${esc(e.message)}</p>`; return; }
-    const lbl = { new: ["ok", "новая"], changed: ["warn", "новая версия"], unchanged: ["muted", "без изменений"], error: ["err", "ошибка"] };
+    const lbl = { new: ["ok", "новая"], changed: ["warn", "новая версия"], unchanged: ["muted", "без изменений"], error: ["err", "ошибка"], slot: ["ok", "слот"] };
     pv.innerHTML = res.map(r => `<div class="card" style="box-shadow:none;border:1px solid var(--line);margin-bottom:8px">
         <div class="row"><span class="badge ${lbl[r.status][0]}">${lbl[r.status][1]}</span><b>${esc(r.folder)}</b>
           ${r.version ? `<span class="muted small">v${r.version}${r.status === "changed" ? ` → v${r.version + 1}` : ""}</span>` : ""}
@@ -162,12 +175,12 @@ function uploadDialog() {
         ${r.status === "changed" ? `<div class="small mt">${r.added.length ? `<span class="ok">+ ${r.added.map(esc).join(", ")}</span><br>` : ""}${r.removed.length ? `<span class="err">− ${r.removed.map(esc).join(", ")}</span><br>` : ""}
           ${r.changed.map(f => `<details><summary>изменён ${esc(f)}</summary><div class="diff">${diffHtml(r.diff[f])}</div></details>`).join("")}</div>` : ""}
       </div>`).join("") + `<div class="row mt"><span class="grow"></span><button data-x>Отмена</button>
-        <button class="primary" id="save" ${res.some(r => r.status === "new" || r.status === "changed") ? "" : "disabled"}>Сохранить</button></div>`;
+        <button class="primary" id="save" ${res.some(r => ["new", "changed", "slot"].includes(r.status)) ? "" : "disabled"}>Сохранить</button></div>`;
     $$("[data-x]", back).forEach(b => b.onclick = close);
     $("#save", back).onclick = async () => {
       try {
         const out = await api("/api/tasks/upload", { method: "POST", body: form(items) });
-        toast(out.map(o => `${o.folder}: ${{ created: "создана", new_version: `версия ${o.version}`, unchanged: "без изменений" }[o.status] || o.error}`).join(" · "));
+        toast(out.map(o => `${o.folder}: ${{ created: "создана", new_version: `версия ${o.version}`, unchanged: "без изменений", slot: `слот ${o.slot}` }[o.status] || o.error}`).join(" · "), out.some(o => o.status === "error"));
         close(); viewTasks();
       } catch (e) { toast(e.message, true); }
     };
@@ -178,21 +191,32 @@ function uploadDialog() {
 async function viewTask(id, tab = "about") {
   const t = await api(`/api/tasks/${id}`);
   view.innerHTML = `
-    <div class="row" style="margin-bottom:6px"><a href="#/tasks" class="muted">← Задачи</a></div>
-    <div class="row" style="margin-bottom:14px"><h1 style="margin:0">${esc(t.title)}</h1>${kindBadge(t.kind)}${t.tag ? `<span class="badge">${esc(t.tag)}</span>` : ""}
+    <div class="row" style="margin-bottom:6px"><a href="#/tasks" class="muted">← Библиотека</a></div>
+    <div class="row" style="margin-bottom:14px"><h1 style="margin:0">${esc(t.title)}</h1>${kindBadge(t.kind)}
+      ${TYPE_BADGE[t.type] ? `<span class="badge">${TYPE_BADGE[t.type][1]}${t.implements ? ` · слот ${esc(t.implements)}` : ""}</span>` : ""}
+      ${t.tags.map(g => `<span class="badge">#${esc(g)}</span>`).join("")}
       ${statusCell(t.status)}<span class="grow"></span>
+      <button class="ghost" id="dup" title="копия задачи со всеми файлами">Дублировать</button>
       <a class="btn" href="#/edit/${t.id}">✎ Редактировать задачу</a>
-      <button class="primary" id="go">${t.active_attempt ? "Продолжить решение" : "Решать"}</button></div>
-    <div class="tabs">${[["about", "Описание"], ["attempts", "Попытки"], ["versions", "Версии"], ["settings", "Настройки"]]
+      <button class="primary" id="go">${t.active_attempt ? "Продолжить решение" : t.deps.length ? "Собрать и решать" : "Решать"}</button></div>
+    ${t.broken ? `<div class="card" style="border-left:3px solid var(--err)"><b class="err">Сломано зависимостью</b> — ${esc(t.broken)}
+      <span class="muted small">Тесты задачи упали на эталоне после смены эталона кирпичика; такие тесты не влияют на оценку.</span>
+      <button class="small" id="recheck">Перепроверить</button></div>` : ""}
+    <div class="tabs">${[["about", "Описание"], ["compose", "Состав"], ["attempts", "Попытки"], ["versions", "Версии"], ["settings", "Настройки"]]
       .map(([k, n]) => `<a href="#/task/${id}/${k}" class="${k === tab ? "active" : ""}">${n}</a>`).join("")}</div>
     <div id="tab"></div>`;
   $("#go").onclick = () => startAttempt(t.id);
+  $("#dup").onclick = async () => { const r = await api(`/api/tasks/${t.id}/duplicate`, { method: "POST" }); toast("копия создана"); location.hash = `#/task/${r.id}`; };
+  const rc = $("#recheck");
+  if (rc) rc.onclick = async () => { rc.disabled = true; const { job } = await api(`/api/tasks/${t.id}/recheck`, { method: "POST" }); await followJob(job, () => {}); viewTask(id, tab); };
   const box = $("#tab");
+  if (tab === "compose") return renderComposition(box, id);
   if (tab === "about") {
     box.innerHTML = `<div class="card"><div class="md">${t.description ? md(t.description) : '<p class="muted">Описания нет — добавьте description.md в редакторе задачи.</p>'}</div></div>
       <div class="card"><div class="row"><span class="label" style="margin:0">Файлы эталона</span></div>
         <div class="mt">${t.reference.map(f => `<span class="badge">${esc(f)} · ${t.roles[f] === "given" ? "дан" : "пишу сам"}</span>`).join(" ")}</div>
-        <div class="muted small mt">тестов: ${t.test_files.map(esc).join(", ") || "нет"} · лимит времени ${t.timeout} с · версия ${t.version}${t.dirty ? ' · <span class="warn">в папке есть несохранённые изменения</span>' : ""}</div></div>`;
+        <div class="muted small mt">тестов: ${t.test_files.map(esc).join(", ") || "нет"} · лимит времени ${t.timeout} с · версия ${t.version}${t.dirty ? ' · <span class="warn">в папке есть несохранённые изменения</span>' : ""}</div>
+        ${t.deps.length ? `<div class="label mt">Зависимости</div>${t.deps.map(d => `<div class="small mono">${d.slot ? `from slots.${esc(d.slot)} import …  <span class="muted">(слот: реализация выбирается при сборке)</span>` : `from bricks.${esc(d.name)} import …  <span class="muted">← ${esc(d.task)}</span>`}</div>`).join("")}` : ""}</div>`;
   } else if (tab === "attempts") {
     box.innerHTML = '<div class="card" id="jr"></div><div class="card" id="hist-card" hidden><h3>Оценка и время по попыткам</h3><div id="hist"></div></div>';
     const rows = await journalTable($("#jr"), { task_id: id });
@@ -214,7 +238,8 @@ function taskSettings(t, box) {
     <div class="card"><h3>Задача</h3>
       <div class="row"><label>Название</label><input id="s-title" class="grow" value="${esc(t.title)}">
         <label>Тип</label><select id="s-kind"><option value="algo" ${t.kind === "algo" ? "selected" : ""}>Алгоритм</option><option value="ml" ${t.kind === "ml" ? "selected" : ""}>ML</option></select>
-        <label>Тема</label><input id="s-tag" value="${esc(t.tag)}" placeholder="сортировка, pandas…"></div>
+        <label>Узел</label><select id="s-topic"></select></div>
+      <div class="row mt"><label>Теги</label><input id="s-tags" class="grow" value="${esc(t.tags.join(", "))}" placeholder="через запятую"></div>
       <div class="row mt"><label>Лимит времени на запуск и тесты, с</label><input id="s-timeout" type="number" min="5" value="${t.timeout}" style="width:100px">
         <span class="muted small">для ML можно 600+</span></div>
       <div class="row mt"><button class="primary" id="s-save">Сохранить</button><span class="grow"></span><button class="danger" id="s-del">Удалить задачу</button></div></div>
@@ -233,9 +258,11 @@ function taskSettings(t, box) {
            <div class="row"><input id="bind-path" class="grow" placeholder="/Users/me/datasets/cifar10"><button id="bind">Подключить как data/</button></div>`}
       <p class="muted small mt">Папка задачи: <span class="mono">${esc(t.path)}</span></p></div>`;
   $("#s-save").onclick = async () => {
-    try { await api(`/api/tasks/${t.id}`, { method: "PATCH", json: { title: $("#s-title").value, kind: $("#s-kind").value, tag: $("#s-tag").value.trim(), timeout: +$("#s-timeout").value } }); toast("сохранено"); }
+    try { await api(`/api/tasks/${t.id}`, { method: "PATCH", json: { title: $("#s-title").value, kind: $("#s-kind").value, timeout: +$("#s-timeout").value,
+      tags: $("#s-tags").value.split(",").map(x => x.trim()).filter(Boolean), ...($("#s-topic").value ? { topic_id: +$("#s-topic").value } : {}) } }); toast("сохранено"); }
     catch (e) { toast(e.message, true); }
   };
+  api("/api/topics").then(tp => { $("#s-topic").innerHTML = topicOptions(tp, t.topic_id); });
   $("#s-del").onclick = async () => {
     if (!confirm(`Удалить «${t.title}» со всеми версиями и попытками? Подключённая папка с данными не пострадает.`)) return;
     await api(`/api/tasks/${t.id}`, { method: "DELETE" }); location.hash = "#/tasks";
@@ -344,7 +371,8 @@ async function viewAttempt(id) {
   const base = `/api/attempts/${id}`;
   const loadedAt = Date.now(), baseMs = a.total_ms;
   const totalMs = () => readonly ? a.total_ms : baseMs + (Date.now() - loadedAt);
-  const written = Object.entries(a.roles).filter(([, r]) => r === "write").map(([f]) => f);
+  const written = a.files.filter(f => a.roles[f] !== "given");  // свои файлы «пишу сам» и кирпичики bricks/…
+  const brickOf = Object.fromEntries((a.bricks || []).filter(b => b.module).map(b => [b.module, b]));
   let refFiles = null;
   if (readonly) refFiles = (await api(`${base}/reference`, { method: "POST" })).files;  // после окончания — без штрафа
   const needsWork = readonly && (a.outcome === "abandoned" || a.outcome === "partial");
@@ -353,7 +381,7 @@ async function viewAttempt(id) {
     { id: "desc", label: "Описание", render: el => { el.innerHTML = `<h2>${esc(a.title)}</h2><div class="row" style="margin-bottom:10px">${kindBadge(a.kind)}${a.tag ? `<span class="badge">${esc(a.tag)}</span>` : ""}
         <span class="muted small">v${a.version} · лимит ${a.timeout} с</span></div>
       <div class="md">${a.description ? md(a.description) : '<p class="muted">описания нет</p>'}</div>
-      <div class="label mt">Файлы</div>${a.files.map(f => `<div class="small"><span class="mono">${esc(f)}</span> — ${a.roles[f] === "given" ? "дан" : "пишу сам"}</div>`).join("")}`; } },
+      <div class="label mt">Файлы</div>${a.files.map(f => `<div class="small"><span class="mono">${esc(f)}</span> — ${a.roles[f] === "given" ? "дан" : brickOf[f] ? `кирпичик «${esc(brickOf[f].title)}», пишу сам` : "пишу сам"}</div>`).join("")}`; } },
     ...(readonly ? [{ id: "report", label: a.report?.weights ? "Отчёт" : "Итог", render: el => a.report?.weights ? renderReport(el, a, na => { a = na; }) : renderAbandoned(el, a) }] : []),
     { id: "attempts", label: "Попытки", render: async el => {
       const list = await api(`/api/tasks/${a.task_id}/attempts`);
@@ -364,12 +392,14 @@ async function viewAttempt(id) {
       if (done.length) historyCharts($("#h", el), done.map(x => ({ date: x.finished_at, score: x.score, total_ms: x.total_ms })));
     } },
     ...(readonly ? [] : [{ id: "ref", label: "Эталон", render: el => renderReference(el, a, base, readonly, () => refFiles, f => { refFiles = f; a.ref_opened = true; }) }]),
+    ...((a.bricks || []).length ? [{ id: "asm", label: "Сборка", render: el => renderAssemblyTab(el, a) }] : []),
   ];
 
   current = await openIDE(view, {
     title: a.title + (readonly ? ` · ${OUTCOME_TITLE[a.outcome] || a.outcome}` : ""), base, readonly, back: `#/task/${a.task_id}`,
     roles: a.roles, main: a.main_file, pyFiles: a.files, preload: a.files, expand: [],
-    open: readonly ? written : [a.main_file, ...a.files.filter(f => a.roles[f] === "write" && f !== a.main_file)].filter(Boolean),
+    open: readonly ? written : [a.main_file, ...written.filter(f => f !== a.main_file)].filter(Boolean),
+    tabNote: p => brickOf[p] ? `<span class="role" title="${esc(brickOf[p].title)}">кирпичик</span>` : "",
     refFiles: readonly ? refFiles : null, cmpMode: "diff", dataLink: a.data_link, initialOutput: a.last_output,
     leftTabs, leftTab: readonly ? "report" : "desc",
     run: path => api(`${base}/run`, { method: "POST", json: { path } }).then(r => r.job),
@@ -390,7 +420,7 @@ async function viewAttempt(id) {
       }
       $("#reset", el).onclick = async () => {
         const p = ide.current;
-        if (!p || !(p in a.roles)) return toast("откройте файл задачи", true);
+        if (!p || !a.files.includes(p)) return toast("откройте файл задачи", true);
         if (!confirm(`Вернуть ${p} к заготовке? Текущий код этого файла пропадёт.`)) return;
         const r = await api(`${base}/reset`, { method: "POST", json: { path: p } });
         ide.models[p].setValue(r.content);
@@ -656,7 +686,8 @@ async function reviewReport(id) {
   let sel = null, sub = null, disp = [];
   const disposeAll = () => { disp.forEach(d => d.dispose()); disp = []; };
   current = { dispose: disposeAll };
-  const unit = "файл"; // в составных задачах — кирпичик (см. часть «Кирпичики»)
+  const unit = Object.keys(r.bricks || {}).length ? "файл / кирпичик" : "файл";
+  const fname = f => r.bricks?.[f] ? `${f} · ${r.bricks[f]}` : f;
   view.innerHTML = `<div class="row" style="margin-bottom:10px"><a href="#/attempt/${r.attempt_id}" class="muted">← исходная попытка</a>
       ${r.status === "active" ? `<span class="grow"></span><a class="btn primary" href="#/review/${r.id}">Продолжить</a>` : ""}</div>
     <div class="card"><h2>${esc(r.title)} · работа над ошибками</h2>${stepperHtml(r)}
@@ -668,7 +699,7 @@ async function reviewReport(id) {
         ${r.log.map(x => `<tr><td class="mono">${esc(x.file)}</td><td>${x.step} · ${RSTEPS[x.step - 1][1]}</td><td class="mono">${fmtMs(x.ms)}</td><td class="muted">${x.checks}</td>
           <td>${x.passed ? '<span class="ok">✓</span>' : '<span class="err">✗</span>'}${x.peeked ? ` <span class="warn small">подглядывал${x.peeks > 1 ? ` ×${x.peeks}` : ""}</span>` : ""}</td></tr>`).join("")}</tbody></table></details></div>
     ${r.details ? `<div class="card">
-      ${r.files.length > 1 ? `<div class="row" id="rr-files" style="margin-bottom:8px"><span class="muted small">${unit}:</span>${r.files.map(f => `<button class="small" data-file="${esc(f)}">${esc(f)}${r.log.some(x => x.file === f && !x.passed) ? ' <span class="err">✗</span>' : ""}</button>`).join("")}</div>` : ""}
+      ${r.files.length > 1 ? `<div class="row" id="rr-files" style="margin-bottom:8px"><span class="muted small">${unit}:</span>${r.files.map(f => `<button class="small" data-file="${esc(f)}">${esc(fname(f))}${r.log.some(x => x.file === f && !x.passed) ? ' <span class="err">✗</span>' : ""}</button>`).join("")}</div>` : ""}
       <div class="seg" id="rr-steps"><button data-step="2">Шаг 2 (с подглядыванием)</button><button data-step="3">Шаг 3 (по памяти)</button></div>
       <div id="rr-sum" class="small" style="margin:10px 0"></div>
       <div class="rr-grid"><div class="rr-runs" id="rr-runs"></div><div class="rr-detail" id="rr-detail"></div></div></div>` : ""}
@@ -793,7 +824,12 @@ async function viewEdit(id) {
     check: () => api(`${base}/check`, { method: "POST" }).then(r => r.job),
     bindData: ide => bindDataPrompt(id, ide),
     buttons: el => {
-      el.innerHTML = `<span class="muted small">v${t.version}</span><button class="primary" id="save-v" title="снимок папки: description, reference, starter, tests">Сохранить версию</button>`;
+      el.innerHTML = `<span class="muted small">v${t.version}</span>
+        <button class="ghost" id="x-brick" title="функция или класс под курсором станет новой задачей; здесь — from bricks.<имя> import …">Вынести в кирпичик</button>
+        <button class="ghost" id="x-slot" title="функция под курсором станет слотом (сигнатура, описание) и его первой реализацией">Создать слот</button>
+        <button class="primary" id="save-v" title="снимок папки: description, reference, starter, tests">Сохранить версию</button>`;
+      $("#x-brick", el).onclick = () => extractBrick(id, current, false);
+      $("#x-slot", el).onclick = () => extractBrick(id, current, true);
       $("#save-v", el).onclick = async () => {
         await current.saveAll();
         try { const r = await api(`${base}/version`, { method: "POST" }); toast(r.status === "unchanged" ? "изменений нет" : `сохранена версия ${r.version}`); }

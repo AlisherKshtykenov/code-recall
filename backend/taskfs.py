@@ -185,7 +185,7 @@ def write_code(root: Path, code: dict):
     root.mkdir(parents=True, exist_ok=True)
     for p in root.rglob("*.py"):
         rel = p.relative_to(root).as_posix()
-        if rel.split("/")[0] in ("data", "results", "tests") or rel == "conftest.py":
+        if rel.split("/")[0] in ("data", "results", "tests", ".lib") or rel == "conftest.py":
             continue
         if rel not in code:
             p.unlink()

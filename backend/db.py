@@ -31,6 +31,10 @@ class Task(Base):
     python = Column(Text, default="")  # путь к .venv / python; "" — окружение приложения
     timeout = Column(Integer, default=60)  # секунд на запуск и прогон тестов
     main_file = Column(String, default="")  # что запускает «Запустить» по умолчанию
+    topic_id = Column(Integer, ForeignKey("topics.id"), nullable=True)  # узел дерева тем
+    tags = Column(Text, default="[]")  # JSON: свободные теги
+    broken = Column(Text, default="")  # «сломано зависимостью»: что упало на эталоне после смены эталона кирпичика
+    last_assembly = Column(Text, default="{}")  # JSON: последняя сборка (для «как в прошлый раз»)
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
     # FSRS (пересчитывается по истории попыток, см. review.replay)
@@ -49,6 +53,46 @@ class Task(Base):
     @property
     def current(self):
         return self.versions[-1] if self.versions else None
+
+
+class Topic(Base):
+    """Узел дерева тем любой глубины."""
+    __tablename__ = "topics"
+    id = Column(Integer, primary_key=True)
+    name = Column(String, nullable=False)
+    parent_id = Column(Integer, ForeignKey("topics.id"), nullable=True)
+    position = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.now)
+
+
+class Slot(Base):
+    """Слот: интерфейс (имя, сигнатура, описание) + контрактные тесты, верные для любой реализации.
+    Задача-кирпичик объявляет «реализую слот X» в task.json ("implements": "X")."""
+    __tablename__ = "slots"
+    id = Column(Integer, primary_key=True)
+    name = Column(String, nullable=False, unique=True)  # имя для импорта: from slots.<name> import <symbol>
+    symbol = Column(String, default="")  # что реэкспортируется (по умолчанию = name)
+    title = Column(String, default="")
+    signature = Column(Text, default="")
+    description = Column(Text, default="")
+    tests = Column(Text, default="{}")  # JSON {tests/test_x.py: текст} — контрактные тесты
+    default_impl = Column(String, default="")  # имя задачи-реализации по умолчанию
+    created_at = Column(DateTime, default=datetime.now)
+
+
+class BrickEvent(Base):
+    """Кирпичик, написанный самому внутри составной задачи: прошёл / упал. Идёт в FSRS кирпичика."""
+    __tablename__ = "brick_events"
+    id = Column(Integer, primary_key=True)
+    task_id = Column(Integer, ForeignKey("tasks.id"), nullable=False)  # кирпичик
+    parent_task_id = Column(Integer, ForeignKey("tasks.id"), nullable=False)  # составная задача
+    attempt_id = Column(Integer, ForeignKey("attempts.id"), nullable=False)
+    dep_name = Column(String, default="")
+    at = Column(DateTime, default=datetime.now)
+    passed = Column(Integer, default=0)
+    grade = Column(Integer, default=3)
+    code = Column(Text, default="")  # код кирпичика — для «моя последняя версия»
+    note = Column(Text, default="")  # что упало
 
 
 class TaskVersion(Base):
@@ -86,6 +130,7 @@ class Attempt(Base):
     last_check = Column(Text, default="")  # JSON: результат последнего «Проверить» (виден и у брошенной)
     last_output = Column(Text, default="")  # JSON: вывод последнего «Запустить»
     touched_at = Column(DateTime, nullable=True)  # последняя активность (правка, запуск, таймер)
+    assembly = Column(Text, default="{}")  # JSON {имя зависимости: {source: self|ref|last, impl}} — сборка составной задачи
 
     task = relationship("Task", back_populates="attempts")
     reviews = relationship("ReviewSession", back_populates="attempt", order_by="ReviewSession.started_at",
@@ -167,10 +212,32 @@ def add_missing_columns():
                                      f"{col.type.compile(engine.dialect)}{sql_default}")
 
 
+def migrate_topics():
+    """Разово: старое поле «тема» (tag) -> узел дерева; без темы — «Алгоритмы» или «ML» по типу."""
+    with SessionLocal() as db:
+        if get_setting(db, "topics_migrated") == "1":
+            return
+        nodes = {}
+
+        def node(name):
+            if name not in nodes:
+                t = db.query(Topic).filter_by(name=name, parent_id=None).first() or Topic(name=name)
+                db.add(t)
+                db.flush()
+                nodes[name] = t
+            return nodes[name]
+        for t in db.query(Task).all():
+            if t.topic_id is None:
+                t.topic_id = node(t.tag.strip() or ("Алгоритмы" if t.kind == "algo" else "ML")).id
+        set_setting(db, "topics_migrated", "1")
+        db.commit()
+
+
 def init_db():
     drop_notebook_era()
     Base.metadata.create_all(engine)
     add_missing_columns()
+    migrate_topics()
 
 
 def get_setting(db, key, default=""):
