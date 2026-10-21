@@ -6,7 +6,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from . import checking, files_api, review, runner, taskfs
+from . import checking, files_api, review, reviews, runner, taskfs
 from .db import Attempt, SessionLocal, Task, TaskVersion
 
 router = APIRouter(prefix="/api")
@@ -76,7 +76,7 @@ def outcome(a: Attempt) -> str:
 
 def review_short(r) -> dict:
     return {"id": r.id, "status": r.status, "step": r.step, "idx": r.idx, "files": json.loads(r.files),
-            "started_at": r.started_at.isoformat(timespec="minutes")}
+            "started_at": r.started_at.isoformat(timespec="minutes"), **reviews.progress(r)}
 
 
 def journal_row(a: Attempt) -> dict:
@@ -223,15 +223,7 @@ def run_file(aid: int, body: RunIn, db=Depends(get_db)):
 
 def remember_output(aid: int, path: str, job):
     """Вывод последнего «Запустить» — чтобы он был виден и в журнале у брошенной попытки."""
-    outs, size = [], 0
-    for o in job.outputs:
-        o = dict(o)
-        if o.get("type") == "stream":
-            o["text"] = o["text"][-20000:]
-        size += len(json.dumps(o, ensure_ascii=False))
-        if size > 400_000:
-            break
-        outs.append(o)
+    outs = runner.outputs_snapshot(job)
     with SessionLocal() as db:
         a = db.get(Attempt, aid)
         if a:

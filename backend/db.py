@@ -109,6 +109,8 @@ class ReviewSession(Base):
     checks = Column(Integer, default=0)  # «Проверить» на текущем шаге
     log = Column(Text, default="[]")  # JSON: [{file, step, ms, passed, peeked, checks}]
     work = Column(Text, default="{}")  # JSON {файл: текст} — что написано в редакторе
+    runs = Column(Text, default="[]")  # JSON: история «Запустить» / «Проверить» — код, тесты, вывод
+    peeks = Column(Integer, default=0)  # сколько раз подсматривал эталон на шаге 3 текущего файла
     started_at = Column(DateTime, default=datetime.now)
     finished_at = Column(DateTime, nullable=True)
 

@@ -223,6 +223,20 @@ def get_worker(key: str, python: str, cwd: str, task_id: int) -> Worker:
         return w
 
 
+def outputs_snapshot(job, tail=20000, limit=400_000) -> list[dict]:
+    """Вывод задания для хранения в базе: хвост каждого текстового блока, не больше limit всего."""
+    outs, size = [], 0
+    for o in job.outputs:
+        o = dict(o)
+        if o.get("type") == "stream":
+            o["text"] = o["text"][-tail:]
+        size += len(json.dumps(o, ensure_ascii=False))
+        if size > limit:
+            break
+        outs.append(o)
+    return outs
+
+
 def submit(key: str, python: str, cwd: str, task_id: int, cmd: dict, timeout: float, on_done=None) -> str:
     """on_done(job) — после завершения (например, запомнить вывод у попытки)."""
     job = new_job(cmd.get("op", "run"))

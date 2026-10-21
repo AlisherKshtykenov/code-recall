@@ -195,7 +195,36 @@ async function followJob(jobId, onUpdate, alive = () => true) {
 
 // ---------------- результаты тестов ----------------
 const TEST_ICON = { pass: ["ok", "✓"], fail: ["err", "✗"], error: ["err", "!"], broken: ["warn", "⚠"], skip: ["muted", "–"] };
-function testsHtml(check) {
+// Строка ошибки в моём коде: последний кадр traceback-а pytest в одном из моих файлов («solution.py:23: in loss»).
+// Если assert упал в самом тесте и моих кадров нет — ищем def функции, которую тест вызвал (model.loss(…), «where loss = …»).
+function errorLine(text, files, code = {}) {
+  let found = null;
+  for (const m of (text || "").matchAll(/(?:^|[\s"'\/])([\w.\-]+\.py)"?(?::|, line )(\d+)/gm)) {
+    if (files.includes(m[1])) found = { file: m[1], line: +m[2] };
+  }
+  if (found) return found;
+  const names = [];
+  for (const m of (text || "").matchAll(/where (\w+) = <[\w.]+ object at|\.(\w+)\(|= (\w+)\(/g)) {
+    const n = m[1] || m[2] || m[3];
+    if (n && !names.includes(n)) names.push(n);
+  }
+  for (const n of names) for (const f of files) {
+    const i = (code[f] || "").split("\n").findIndex(l => new RegExp(`^\\s*(async\\s+)?def\\s+${n}\\b`).test(l));
+    if (i >= 0) return { file: f, line: i + 1, fn: n };
+  }
+  return null;
+}
+
+// «assert 0.91 >= 0.95» -> получено 0.91, ожидалось >= 0.95; «isclose(tensor(6.33), tensor(4.33))» -> ≈
+function expectedGot(message, text = "") {
+  const first = (message || "").split("\n").find(l => /\bassert\b/.test(l));
+  const m = first && first.match(/\bassert\s+(.+?)\s+(==|!=|>=|<=|<|>|is not|is|not in|in)\s+(.+)$/);
+  if (m) return { got: m[1], op: m[2], expected: m[3] };
+  const c = (message + "\n" + text).match(/(?:isclose|allclose)[^(]*\((.+?), (.+?)\)\s*$/m);
+  return c ? { got: c[1], op: "≈", expected: c[2] } : null;
+}
+
+function testsHtml(check, opts = {}) {
   if (!check) return '<div class="empty">Нажмите «Проверить», чтобы прогнать тесты.</div>';
   if (check.fatal && !check.tests?.length) return `<div class="err" style="padding:8px">${esc(check.fatal)}</div>`;
   const broken = check.broken ? ` · <span class="warn">${check.broken} сломан(о) на эталоне — не учитывается</span>` : "";
@@ -207,6 +236,12 @@ function testsHtml(check) {
       return `<div class="test-row"><span class="${cls}">${ico}</span><span><b>${esc(t.name)}</b> <span class="muted small">${esc(t.file)}</span></span>
         <span class="muted small">${t.time ? t.time.toFixed(2) + " с" : ""}</span>
         ${t.message ? `<div class="msg">${esc(t.message.split("\n").slice(0, 4).join("\n"))}</div>` : ""}
+        ${(() => {
+          if (!["fail", "error"].includes(t.status)) return "";
+          const eg = expectedGot(t.message, t.text), loc = opts.files && errorLine(t.text, opts.files, opts.code);
+          return (eg || loc) ? `<div class="eg">${eg ? `получено <b class="mono">${esc(eg.got)}</b> · ожидалось <b class="mono">${esc(eg.op)} ${esc(eg.expected)}</b>` : ""}
+            ${loc ? `<button class="small ghost" data-loc="${esc(loc.file)}:${loc.line}">показать в коде · ${esc(loc.file)}:${loc.line}${loc.fn ? ` (${esc(loc.fn)})` : ""}</button>` : ""}</div>` : "";
+        })()}
         ${t.text ? `<details><summary class="muted small">traceback</summary><pre>${esc(t.text)}</pre></details>` : ""}</div>`;
     }).join("");
 }

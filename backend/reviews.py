@@ -17,7 +17,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from . import checking, files_api, review, runner, taskfs
+from . import checking, files_api, review, runner, semantic, taskfs
 from .db import Attempt, ReviewSession, SessionLocal, TaskVersion
 
 router = APIRouter(prefix="/api")
@@ -78,7 +78,7 @@ def public(db, r: ReviewSession) -> dict:
     out = {"id": r.id, "attempt_id": a.id, "task_id": t.id, "title": t.title, "kind": t.kind,
            "description": files.get("description.md", ""), "status": r.status, "step": r.step,
            "step_name": STEPS.get(r.step), "files": json.loads(r.files), "idx": r.idx, "file": target,
-           "roles": roles, "all_files": sorted(ref), "peeked": bool(r.peeked), "checks": r.checks,
+           "roles": roles, "all_files": sorted(ref), "peeked": bool(r.peeked), "peeks": r.peeks or 0, "checks": r.checks,
            "log": json.loads(r.log or "[]"), "started_at": r.started_at.isoformat(timespec="seconds"),
            "step_started": r.step_started.isoformat(timespec="seconds"), "timeout": t.timeout,
            "finished_at": r.finished_at.isoformat(timespec="minutes") if r.finished_at else None,
@@ -100,7 +100,74 @@ def journal_row(r: ReviewSession, task) -> dict:
             "date": (r.finished_at or r.started_at).isoformat(timespec="minutes"),
             "started_at": r.started_at.isoformat(timespec="minutes"), "step": r.step,
             "files": json.loads(r.files), "total_ms": sum(x["ms"] for x in log), "log": log,
-            "checks": sum(x["checks"] for x in log), "ref_opened": any(x["peeked"] for x in log)}
+            "checks": sum(x["checks"] for x in log), "ref_opened": any(x["peeked"] for x in log),
+            "reason": reason(r), "details": bool(json.loads(r.runs or "[]")) or any("code" in x for x in log)}
+
+
+# ---------- история прогонов ----------
+
+MAX_RUNS = 80
+
+
+def slim_check(res: dict) -> dict:
+    """Результат тестов для хранения: по каждому тесту — статус, сообщение, traceback."""
+    keep = ("passed", "total", "broken", "fatal", "timeout", "ms", "checked_at")
+    out = {k: res.get(k) for k in keep}
+    out["tests"] = [{k: t.get(k) for k in ("id", "name", "file", "status", "message", "time")} | {"text": (t.get("text") or "")[-8000:]}
+                    for t in res.get("tests", [])]
+    return out
+
+
+def add_run(r: ReviewSession, entry: dict):
+    runs = json.loads(r.runs or "[]")
+    entry |= {"n": len(runs) + 1, "file": current_file(r), "step": r.step, "at": datetime.now().isoformat(timespec="seconds"),
+              "step_ms": int((datetime.now() - r.step_started).total_seconds() * 1000), "peeks": r.peeks or 0}
+    runs.append(entry)
+    if len(runs) > MAX_RUNS:  # самые старые прогоны без тестов выкидываем первыми
+        drop = next((i for i, x in enumerate(runs) if x["kind"] == "run"), 0)
+        runs.pop(drop)
+    r.runs = json.dumps(runs, ensure_ascii=False)
+
+
+def first_failure(check: dict | None) -> str:
+    if not check:
+        return ""
+    if check.get("fatal"):
+        return check["fatal"].strip().splitlines()[-1][:120]
+    bad = next((t for t in check.get("tests", []) if t["status"] in ("fail", "error")), None)
+    if not bad:
+        return ""
+    msg = (bad.get("message") or bad["status"]).strip().splitlines()[0]
+    return f"упал {bad['name']} ({msg[:100]})"
+
+
+def last_check(r: ReviewSession, step: int, file: str | None = None):
+    runs = [x for x in json.loads(r.runs or "[]") if x["kind"] == "check" and x["step"] == step and (file is None or x["file"] == file)]
+    return runs[-1] if runs else None
+
+
+def reason(r: ReviewSession) -> str:
+    """Короткая причина для журнала: «шаг 3: упал test_loss (AssertionError: …)»."""
+    if r.status in ("passed", "active"):
+        return ""
+    log = json.loads(r.log or "[]")
+    last = log[-1] if log else {"step": r.step, "file": current_file(r), "peeked": r.peeked}
+    files = json.loads(r.files)
+    where = f"шаг {last['step']}" + (f", {last['file']}" if len(files) > 1 else "")
+    run = last_check(r, last["step"], last.get("file"))
+    fail = first_failure(run["check"]) if run else ""
+    if r.status == "abandoned":
+        return f"брошена на шаге {last['step']}" + (f": {fail}" if fail else "")
+    if last.get("peeked") and not fail:
+        return f"{where}: тесты прошли, но подглядывал в эталон"
+    return f"{where}: {fail}" if fail else where
+
+
+def progress(r: ReviewSession) -> dict:
+    """Сколько тестов прошло на шаге 3 (последняя сдача) — для «1-я — 2/7, 2-я — 5/7»."""
+    run = last_check(r, 3)
+    c = run["check"] if run else None
+    return {"result": f"{c['passed']}/{c['total']}" if c and c.get("total") else None, "reason": reason(r)}
 
 
 class StartIn(BaseModel):
@@ -139,20 +206,47 @@ def get(rid: int, db=Depends(get_db)):
 
 def log_step(r: ReviewSession, passed: bool):
     log = json.loads(r.log or "[]")
-    log.append({"file": current_file(r), "step": r.step, "passed": passed, "peeked": bool(r.peeked),
-                "checks": r.checks, "ms": int((datetime.now() - r.step_started).total_seconds() * 1000)})
+    target = current_file(r)
+    entry = {"file": target, "step": r.step, "passed": passed, "peeked": bool(r.peeked), "peeks": r.peeks or 0,
+             "checks": r.checks, "ms": int((datetime.now() - r.step_started).total_seconds() * 1000),
+             "started": r.step_started.isoformat(timespec="seconds"), "ended": datetime.now().isoformat(timespec="seconds")}
+    if r.step in (2, 3):  # код файла на конец шага
+        entry["code"] = json.loads(r.work or "{}").get(target, "")
+    log.append(entry)
     r.log = json.dumps(log, ensure_ascii=False)
 
 
 def next_step(db, r: ReviewSession):
     r.step += 1
-    r.step_started, r.checks, r.peeked = datetime.now(), 0, 0
+    r.step_started, r.checks, r.peeked, r.peeks = datetime.now(), 0, 0, 0
     if r.step in (2, 3):  # каждый шаг 2 и 3 начинается с пустого редактора
         work = json.loads(r.work or "{}")
         work[current_file(r)] = ""
         r.work = json.dumps(work, ensure_ascii=False)
     db.commit()
     write_workdir(db, r)
+
+
+@router.get("/reviews/{rid}/report")
+def report(rid: int, db=Depends(get_db)):
+    """Полный отчёт: по каждому файлу и шагу — время, подглядывания, история прогонов с кодом, тестами и выводом."""
+    r = load(db, rid)
+    files, _ = version_files(db, r)
+    ref = taskfs.reference_files(files)
+    runs = json.loads(r.runs or "[]")
+    log = json.loads(r.log or "[]")
+    out = public(db, r)
+    out.update(runs=runs, log=log, reason=reason(r), details=bool(runs) or any("code" in x for x in log),
+               references={f: ref.get(f, "") for f in json.loads(r.files)})
+    if r.status == "active":  # незакрытый шаг — тоже в отчёт, с текущим кодом
+        target = current_file(r)
+        out["open_step"] = {"file": target, "step": r.step, "peeked": bool(r.peeked), "peeks": r.peeks or 0, "checks": r.checks,
+                            "ms": int((datetime.now() - r.step_started).total_seconds() * 1000),
+                            "code": json.loads(r.work or "{}").get(target, "")}
+    for x in log:  # чем закончился шаг: сравнение финального кода с эталоном по смыслу
+        if "code" in x:
+            x["similarity"] = semantic.compare(x["code"], ref.get(x["file"], ""))["similarity"]
+    return out
 
 
 @router.post("/reviews/{rid}/next")
@@ -172,6 +266,7 @@ def peek(rid: int, db=Depends(get_db)):
     r = active(db, rid)
     if r.step == 3:
         r.peeked = 1
+        r.peeks = (r.peeks or 0) + 1
         db.commit()
     return public(db, r)
 
@@ -214,6 +309,12 @@ def check(rid: int, db=Depends(get_db)):
         ok = bool(res.get("total")) and res["passed"] == res["total"]
         with SessionLocal() as db2:
             rr = db2.get(ReviewSession, rid)
+            target = current_file(rr)
+            ref_code = taskfs.reference_files(version_files(db2, rr)[0]).get(target, "")
+            mine = code.get(target, "")
+            add_run(rr, {"kind": "check", "code": {target: mine}, "check": slim_check(res),
+                         "outputs": runner.outputs_snapshot(job, tail=12000, limit=120_000),
+                         "similarity": semantic.compare(mine, ref_code)["similarity"]})
             outcome = None
             if ok and rr.step == 2:
                 log_step(rr, True)
@@ -233,6 +334,9 @@ def check(rid: int, db=Depends(get_db)):
                 else:
                     finish(db2, rr, "passed")
                     outcome = "passed"
+            runs = json.loads(rr.runs)
+            runs[-1]["outcome"] = outcome
+            rr.runs = json.dumps(runs, ensure_ascii=False)
             db2.commit()
         job.finish({"status": "ok", "check": res, "outcome": outcome})
 
@@ -278,7 +382,18 @@ def need_editor(db, rid):
 def run(rid: int, body: RunIn, db=Depends(get_db)):
     r = need_editor(db, rid)
     write_workdir(db, r)
-    return {"job": runner.submit(**worker_args(r), cmd={"op": "run", "path": body.path}, timeout=r.attempt.task.timeout)}
+    target = current_file(r)
+    code = {target: json.loads(r.work or "{}").get(target, "")}
+
+    def remember(job):
+        with SessionLocal() as db2:
+            rr = db2.get(ReviewSession, rid)
+            if rr and rr.status == "active":
+                add_run(rr, {"kind": "run", "path": body.path, "code": code, "result": job.result,
+                             "outputs": runner.outputs_snapshot(job, tail=12000, limit=120_000)})
+                db2.commit()
+    return {"job": runner.submit(**worker_args(r), cmd={"op": "run", "path": body.path}, timeout=r.attempt.task.timeout,
+                                 on_done=remember)}
 
 
 @router.post("/reviews/{rid}/exec")
