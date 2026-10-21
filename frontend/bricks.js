@@ -5,6 +5,16 @@ const SOURCE_NAME = { self: "пишу сам", ref: "эталон", last: "мо�
 const TYPE_BADGE = { composite: ["", "составная"], slot: ["", "кирпичик"], plain: null };
 const NODE_STATUS = { solved: ["ok", "решено"], due: ["warn", "пора повторить"], new: ["muted", "новая"],
                       broken: ["err", "сломано зависимостью"], failed: ["err", "упал в задаче"] };
+// Ответы API без нужного списка (старый сервер, NULL в базе) не роняют экран: вместо undefined — []
+const arr = x => Array.isArray(x) ? x : [];
+const apiList = path => api(path).then(arr).catch(() => []);
+function normTask(t) {
+  t.tags = arr(t.tags); t.deps = arr(t.deps);
+  t.type ||= t.deps.length ? "composite" : t.implements ? "slot" : "plain";
+  t.implements ||= ""; t.broken ||= "";
+  return t;
+}
+
 const store = {
   get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* приватное окно */ } },
@@ -12,6 +22,7 @@ const store = {
 
 // ---------- дерево тем ----------
 function topicTree(topics) {
+  topics = arr(topics);
   const kids = {};
   topics.forEach(t => (kids[t.parent_id ?? "root"] ||= []).push(t));
   Object.values(kids).forEach(l => l.sort((a, b) => a.position - b.position || a.name.localeCompare(b.name)));
@@ -23,7 +34,7 @@ function subtreeIds(kids, id) {
   return out;
 }
 function topicPath(topics, id) {
-  const by = Object.fromEntries(topics.map(t => [t.id, t]));
+  const by = Object.fromEntries(arr(topics).map(t => [t.id, t]));
   const parts = [];
   for (let t = by[id]; t; t = by[t.parent_id]) parts.unshift(t.name);
   return parts.join(" / ");
@@ -37,6 +48,7 @@ function topicOptions(topics, sel) {
 
 // Левая панель библиотеки: дерево (сворачивается), перетаскивание узлов и задач, ＋ / ✎ / ✕
 function renderTopicTree(box, topics, state, onChange) {
+  topics = arr(topics);
   const kids = topicTree(topics);
   const collapsed = new Set(store.get("topics.collapsed", []));
   const all = topics.filter(t => t.parent_id == null).reduce((s, t) => [s[0] + t.total, s[1] + t.total_due], [0, 0]);
@@ -51,8 +63,8 @@ function renderTopicTree(box, topics, state, onChange) {
   box.innerHTML = `<div class="row" style="margin-bottom:6px"><b class="grow">Темы</b><button class="icon-btn" data-add="" title="новый узел в корне">＋</button></div>
     <div class="tnode ${state.topic == null ? "sel" : ""}" data-topic="" style="padding-left:8px"><span class="caret"></span><span class="tname grow">Все задачи</span>
       <span class="tcount">${all[0]}${all[1] ? ` · <span class="warn">${all[1]}</span>` : ""}</span></div>
-    ${(kids.root || []).map(t => row(t, 0)).join("")}
-    <p class="muted small mt">Перетащите задачу или узел на узел, чтобы перенести.</p>`;
+    ${(kids.root || []).map(t => row(t, 0)).join("") || '<p class="muted small" style="padding:4px 8px">Тем пока нет — ＋ создайте первую.</p>'}
+    ${topics.length ? '<p class="muted small mt">Перетащите задачу или узел на узел, чтобы перенести.</p>' : ""}`;
   box.onclick = async e => {
     const b = e.target.closest("button"), caret = e.target.closest("[data-caret]");
     if (caret && caret.textContent) {
@@ -104,12 +116,13 @@ function renderTopicTree(box, topics, state, onChange) {
 
 // ---------- экран сборки ----------
 async function viewAssemble(id) {
-  const t = await api(`/api/tasks/${id}`);
-  let opt = await api(`/api/tasks/${id}/assembly`);
+  const t = normTask(await api(`/api/tasks/${id}`));
+  const normOpt = o => ({ ...o, nodes: arr(o?.nodes).map(n => ({ ...n, impls: arr(n.impls) })), last: o?.last || {} });
+  let opt = normOpt(await api(`/api/tasks/${id}/assembly`));
   let asm = Object.fromEntries(opt.nodes.map(n => [n.name, { source: n.source, ...(n.kind === "slot" ? { impl: n.task_name } : {}) }]));
   const lastAsm = opt.last;
   async function refresh() {
-    opt = await api(`/api/tasks/${id}/assembly?asm=${encodeURIComponent(JSON.stringify(asm))}`);
+    opt = normOpt(await api(`/api/tasks/${id}/assembly?asm=${encodeURIComponent(JSON.stringify(asm))}`));
     asm = Object.fromEntries(opt.nodes.map(n => [n.name, { source: asm[n.name]?.source || "ref", ...(n.kind === "slot" ? { impl: n.task_name } : {}) }]));
     render();
   }
@@ -122,7 +135,8 @@ async function viewAssemble(id) {
         <button class="primary" id="as-go">Начать</button></div>
       <p class="muted small">Для каждой зависимости: <b>пишу сам</b> — файл <span class="mono">bricks/&lt;имя&gt;.py</span> в попытке (его собственные тесты гоняются первыми);
         <b>эталон</b> — подключается скрыто, только для импорта; <b>моя последняя</b> — ваш код из попытки, где все его тесты прошли. Выбор запоминается.</p>
-      <div class="card"><table><thead><tr><th>Импорт</th><th>Кирпичик</th><th>Статус</th><th>Источник</th></tr></thead><tbody>
+      ${nodes.length ? "" : '<div class="card empty">У этой задачи нет зависимостей — собирать нечего, можно сразу начинать.</div>'}
+      <div class="card" ${nodes.length ? "" : "hidden"}><table><thead><tr><th>Импорт</th><th>Кирпичик</th><th>Статус</th><th>Источник</th></tr></thead><tbody>
       ${nodes.map(n => {
         const st = NODE_STATUS[n.status] || NODE_STATUS.new, src = asm[n.name]?.source || "ref";
         return `<tr><td style="padding-left:${10 + n.depth * 18}px" class="mono small">${n.depth ? "└ " : ""}${n.kind === "slot" ? `slots.${esc(n.slot)}` : `bricks.${esc(n.name)}`}</td>
@@ -149,6 +163,7 @@ async function viewAssemble(id) {
 // ---------- граф «Состав» ----------
 async function renderComposition(box, id) {
   const g = await api(`/api/tasks/${id}/graph`);
+  g.up = arr(g.up); g.down = arr(g.down);
   const card = (n, cls = "") => {
     const st = NODE_STATUS[n.status] || NODE_STATUS.new;
     return `<a class="gnode ${cls}" href="#/task/${n.task_id ?? n.id}" data-g="${n.key}"><b>${esc(n.title)}</b>
@@ -182,7 +197,7 @@ async function renderComposition(box, id) {
 const WIZ_REF = "def solve(xs):\n    return sorted(xs)\n";
 const WIZ_TEST = "from solution import solve\n\n\ndef test_example():\n    assert solve([3, 1, 2]) == [1, 2, 3]\n";
 async function wizardDialog(preset = {}) {
-  const [topics, tasks, slots] = await Promise.all([api("/api/topics"), api("/api/tasks"), api("/api/slots")]);
+  const [topics, tasks, slots] = await Promise.all([apiList("/api/topics"), apiList("/api/tasks"), apiList("/api/slots")]);
   const st = { step: 1, title: "", topic_id: preset.topic_id ?? null, tags: "", kind: "algo", type: "plain", implements: "", newSlot: "",
                files: { "reference/solution.py": WIZ_REF, "tests/test_solution.py": WIZ_TEST }, deps: [], cur: "reference/solution.py" };
   const back = document.createElement("div");
@@ -305,6 +320,7 @@ async function extractBrick(taskId, ide, asSlot) {
 
 // ---------- сборка в попытке (вкладка слева) ----------
 function renderAssemblyTab(el, a) {
+  a.bricks = arr(a.bricks);
   const slots = a.bricks.filter(b => b.kind === "slot");
   el.innerHTML = `<p class="muted small">Кирпичики этой попытки. «Пишу сам» — файлы <span class="mono">bricks/…</span> в редакторе; при «Проверить» сначала гоняются их собственные тесты.</p>
     ${a.bricks.map(b => b.error ? `<p class="err small">${esc(b.error)}</p>` : `<div class="row small" style="padding:4px 0 4px ${b.depth * 14}px;border-bottom:1px solid var(--line)">
@@ -318,7 +334,7 @@ function renderAssemblyTab(el, a) {
     try {
       const { job } = await api(`/api/attempts/${a.id}/check_slots`, { method: "POST" });
       const r = (await followJob(job, () => {})).result;
-      out.innerHTML = `<table><thead><tr><th>Слот</th><th>Реализация</th><th>Тесты</th></tr></thead><tbody>${r.slots.map(x => `<tr><td class="mono">${esc(x.slot)}</td>
+      out.innerHTML = `<table><thead><tr><th>Слот</th><th>Реализация</th><th>Тесты</th></tr></thead><tbody>${arr(r?.slots).map(x => `<tr><td class="mono">${esc(x.slot)}</td>
         <td>${esc(x.title)}${x.current ? ' <span class="muted small">(в сборке)</span>' : ""}</td>
         <td>${x.fatal ? `<span class="err small">${esc(x.fatal)}</span>` : `<b class="${x.passed === x.total && x.total ? "ok" : "err"}">${x.passed}/${x.total}</b>`}</td></tr>`).join("")}</tbody></table>`;
     } catch (e) { out.innerHTML = `<p class="err small">${esc(e.message)}</p>`; }

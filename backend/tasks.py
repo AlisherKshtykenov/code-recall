@@ -308,8 +308,8 @@ def task_short(t: Task) -> dict:
             "last_attempt": iso(max((a.finished_at for a in done), default=None)),
             "active_attempt": next((a.id for a in reversed(t.attempts) if a.status == "active"), None),
             "due_at": iso(t.due_at), "status": review.task_status(t), "updated_at": iso(t.updated_at),
-            "topic_id": t.topic_id, "tags": json.loads(t.tags or "[]"), "broken": t.broken or "",
-            "implements": bricks.implements_of(files), "deps": bricks.deps_of(files),
+            "topic_id": t.topic_id, "tags": taskfs.json_list(t.tags), "broken": t.broken or "",
+            "implements": bricks.implements_of(files), "deps": bricks.deps_of(files) or [],
             "type": "composite" if bricks.deps_of(files) else "slot" if bricks.implements_of(files) else "plain"}
 
 

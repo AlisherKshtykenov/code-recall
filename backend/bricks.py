@@ -33,7 +33,8 @@ def files_of(task: Task) -> dict:
 def deps_of(files: dict) -> list[dict]:
     """Зависимости из task.json: [{name, task} | {name, slot}]; name — имя модуля для импорта."""
     out = []
-    for d in taskfs.read_meta(files).get("deps") or []:
+    deps = taskfs.read_meta(files).get("deps")
+    for d in deps if isinstance(deps, list) else []:
         if not isinstance(d, dict) or not (d.get("task") or d.get("slot")):
             continue
         target = d.get("task") or d.get("slot")
@@ -201,7 +202,7 @@ def contract_tests(db, files: dict) -> dict:
     if not s:
         return {}
     out = {}
-    for rel, text in json.loads(s.tests or "{}").items():
+    for rel, text in taskfs.json_dict(s.tests).items():
         base = rel.split("/")[-1]
         out[f"tests/test_contract_{impl}_{base[5:] if base.startswith('test_') else base}"] = text
     return out

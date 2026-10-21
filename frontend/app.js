@@ -33,7 +33,7 @@ const kindBadge = k => `<span class="badge ${k}">${KIND[k] || k}</span>`;
 
 async function startAttempt(taskId) {
   try {
-    const t = await api(`/api/tasks/${taskId}`);
+    const t = normTask(await api(`/api/tasks/${taskId}`));
     if (t.deps.length && !t.active_attempt) { location.hash = `#/assemble/${taskId}`; return; }  // составная — сначала сборка
     const a = await api(`/api/tasks/${taskId}/attempts`, { method: "POST" });
     location.hash = `#/attempt/${a.id}`;
@@ -74,7 +74,9 @@ async function viewToday() {
 // ---------------- Задачи (как список задач LeetCode) ----------------
 const lib = { q: "", kind: "", status: "", tags: [], topic: undefined, sort: "title", dir: 1 };
 async function viewTasks() {
-  const [tasks, topics] = await Promise.all([api("/api/tasks"), api("/api/topics")]);
+  // дерево тем — необязательная часть: не загрузилось — библиотека всё равно открывается, без дерева
+  const [rawTasks, topics] = await Promise.all([api("/api/tasks"), apiList("/api/topics")]);
+  const tasks = arr(rawTasks).map(normTask);
   lib.topic ??= store.get("lib.topic", null);
   if (lib.topic != null && !topics.some(t => t.id === lib.topic)) lib.topic = null;
   const allTags = [...new Set(tasks.flatMap(t => t.tags))].sort();
@@ -189,7 +191,7 @@ function uploadDialog() {
 
 // ---------------- Страница задачи ----------------
 async function viewTask(id, tab = "about") {
-  const t = await api(`/api/tasks/${id}`);
+  const t = normTask(await api(`/api/tasks/${id}`));
   view.innerHTML = `
     <div class="row" style="margin-bottom:6px"><a href="#/tasks" class="muted">← Библиотека</a></div>
     <div class="row" style="margin-bottom:14px"><h1 style="margin:0">${esc(t.title)}</h1>${kindBadge(t.kind)}
@@ -262,7 +264,7 @@ function taskSettings(t, box) {
       tags: $("#s-tags").value.split(",").map(x => x.trim()).filter(Boolean), ...($("#s-topic").value ? { topic_id: +$("#s-topic").value } : {}) } }); toast("сохранено"); }
     catch (e) { toast(e.message, true); }
   };
-  api("/api/topics").then(tp => { $("#s-topic").innerHTML = topicOptions(tp, t.topic_id); });
+  apiList("/api/topics").then(tp => { $("#s-topic").innerHTML = '<option value="">— без узла —</option>' + topicOptions(tp, t.topic_id); });
   $("#s-del").onclick = async () => {
     if (!confirm(`Удалить «${t.title}» со всеми версиями и попытками? Подключённая папка с данными не пострадает.`)) return;
     await api(`/api/tasks/${t.id}`, { method: "DELETE" }); location.hash = "#/tasks";

@@ -116,11 +116,25 @@ def default_roles(files: dict, meta: dict | None = None) -> dict:
     return {f: ("given" if given.get(f) == "given" else "write") for f in reference_files(files)}
 
 
-def read_meta(files: dict) -> dict:
+def json_list(text) -> list:
+    """Список из JSON-колонки: NULL, пустая строка или битый JSON -> []."""
     try:
-        return json.loads(files.get("task.json") or "{}")
-    except ValueError:
+        v = json.loads(text or "[]")
+    except (ValueError, TypeError):
+        return []
+    return v if isinstance(v, list) else []
+
+
+def json_dict(text) -> dict:
+    try:
+        v = json.loads(text or "{}")
+    except (ValueError, TypeError):
         return {}
+    return v if isinstance(v, dict) else {}
+
+
+def read_meta(files: dict) -> dict:
+    return json_dict(files.get("task.json"))
 
 
 def attempt_start_files(files: dict, roles: dict) -> dict:

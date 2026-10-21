@@ -118,7 +118,7 @@ def delete_topic(nid: int, db=Depends(get_db)):
 
 def slot_out(db, s: Slot) -> dict:
     return {"id": s.id, "name": s.name, "symbol": s.symbol or s.name, "title": s.title or s.name, "signature": s.signature,
-            "description": s.description, "tests": json.loads(s.tests or "{}"), "default_impl": s.default_impl,
+            "description": s.description, "tests": taskfs.json_dict(s.tests), "default_impl": s.default_impl,
             "impls": [{"id": t.id, "name": t.name, "title": t.title, "status": review.task_status(t)} for t in bricks.impls(db, s.name)]}
 
 
@@ -422,7 +422,7 @@ def duplicate(tid: int, db=Depends(get_db)):
     files = json.loads(t.current.files)
     title = f"{t.title} (копия)"
     write_meta(files, title=title)
-    n = make_task(db, title, files, t.topic_id, json.loads(t.tags or "[]"), t.kind)
+    n = make_task(db, title, files, t.topic_id, taskfs.json_list(t.tags), t.kind)
     n.python, n.timeout, n.main_file = t.python, t.timeout, t.main_file
     db.commit()
     return {"id": n.id}
@@ -498,7 +498,7 @@ def extract(tid: int, body: ExtractIn, db=Depends(get_db)):
         write_meta(brick_files, title=f"{title} (реализация)", implements=slot_name)
     else:
         write_meta(brick_files, title=title)
-    b = make_task(db, title if not body.as_slot else f"{title} (реализация)", brick_files, t.topic_id, json.loads(t.tags or "[]"), t.kind)
+    b = make_task(db, title if not body.as_slot else f"{title} (реализация)", brick_files, t.topic_id, taskfs.json_list(t.tags), t.kind)
     if body.as_slot:
         s = db.query(Slot).filter_by(name=slot_name).first()
         s.default_impl = b.name
