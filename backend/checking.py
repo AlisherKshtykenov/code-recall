@@ -12,7 +12,7 @@ import json
 import shutil
 from datetime import datetime
 
-from . import llm, review, runner, taskfs
+from . import llm, review, runner, semantic, taskfs
 from .db import Attempt, SessionLocal, Task, TaskVersion, get_setting
 
 SCORE_DEFAULTS = {"free_checks": 2, "check_penalty": 3, "check_penalty_max": 15,
@@ -206,7 +206,7 @@ def finish_submit(attempt_id: int, result: dict):
         mine = json.loads(a.files)
         sc = score_attempt(db, a, result)
         written = sorted(f for f in set(ref_code) | set(mine) if roles.get(f, "write") == "write")
-        diffs = {f: unified(ref_code.get(f, ""), mine.get(f, ""), f) for f in written}
+        diffs = {f: semantic.unified(ref_code.get(f, ""), mine.get(f, ""), f) for f in written}  # по смыслу
         history = [{"id": x.id, "date": x.finished_at.isoformat(timespec="minutes"), "score": x.score,
                     "total_ms": x.total_ms} for x in a.task.attempts if x.status == "submitted" and x.id != a.id]
         history.append({"id": a.id, "date": a.finished_at.isoformat(timespec="minutes"), "score": sc["score"],

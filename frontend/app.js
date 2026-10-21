@@ -516,7 +516,6 @@ function stepperHtml(r) {
   return `<div class="stepper">${RSTEPS.map(([n, name]) => `<span class="st ${r.status === "active" && r.step === n ? "cur" : (r.status === "passed" || r.step > n) ? "done" : ""}">${r.status === "passed" || r.step > n ? "✓" : n} ${name}</span>`).join('<span class="muted">→</span>')}
     ${r.files.length > 1 ? `<span class="muted small">файл ${r.idx + 1} из ${r.files.length}: <span class="mono">${esc(r.file)}</span></span>` : `<span class="muted small mono">${esc(r.file)}</span>`}</div>`;
 }
-const norm = l => l.replace(/\s+/g, "");
 
 async function viewReview(id) {
   const r = await api(`/api/reviews/${id}`);
@@ -528,7 +527,7 @@ async function viewReview(id) {
   const step2 = r.step === 2;
   const refTab = { id: "ref", label: "Эталон", render: el => {
     el.style.padding = "0";
-    el.innerHTML = `<div class="small muted" style="padding:8px 12px;border-bottom:1px solid var(--line)">эталон <span class="mono">${esc(r.file)}</span> — только чтение</div><div id="ref-ed" style="height:calc(100% - 34px)"></div>`;
+    el.innerHTML = `<div class="small muted row" style="padding:8px 12px;border-bottom:1px solid var(--line)">эталон <span class="mono">${esc(r.file)}</span> — только чтение<span class="grow"></span><span id="sim-pct"></span></div><div id="ref-ed" style="height:calc(100% - 36px)"></div>`;
     const ed = monaco.editor.create($("#ref-ed", el), { value: r.reference, language: "python", readOnly: true, automaticLayout: true,
       minimap: { enabled: false }, fontFamily: "JetBrains Mono, Menlo, monospace", fontSize: 13, fontLigatures: false, scrollBeyondLastLine: false });
     const prevDispose = el._dispose;
@@ -547,18 +546,23 @@ async function viewReview(id) {
       Object.assign(r, nr); taskTab.render(el);
     };
   } };
-  let decorations = [];
-  const highlight = (model, editor) => {  // зелёный — строка совпала с эталоном, жёлтый — отличается
-    const ref = (r.reference || "").split("\n");
-    const lines = model.getValue().split("\n");
-    const dec = [];
-    lines.forEach((l, i) => {
-      if (!l.trim()) return;
-      const same = ref[i] !== undefined && norm(ref[i]) === norm(l);
-      dec.push({ range: new monaco.Range(i + 1, 1, i + 1, 1), options: { isWholeLine: true, className: same ? "line-same" : "line-diff",
+  let decorations = [], hlTimer = null, hlSeq = 0;
+  // зелёный — строка совпала с эталоном по смыслу, жёлтый — отличается (пробелы и комментарии не в счёт)
+  const highlight = (model, editor) => {
+    clearTimeout(hlTimer);
+    hlTimer = setTimeout(async () => {
+      const seq = ++hlSeq, text = model.getValue();
+      const cmp = await compareCode(text, r.reference || "").catch(() => null);
+      if (!cmp || seq !== hlSeq || model.isDisposed()) return;
+      const lines = text.split("\n");
+      const mark = (n, same) => ({ range: new monaco.Range(n, 1, n, 1), options: { isWholeLine: true, className: same ? "line-same" : "line-diff",
         linesDecorationsClassName: same ? "glyph-same" : "glyph-diff" } });
-    });
-    decorations = editor.deltaDecorations(decorations, dec);
+      const dec = [...cmp.mine.same.filter(n => lines[n - 1]?.trim()).map(n => mark(n, true)),
+                   ...cmp.mine.changed.filter(n => lines[n - 1]?.trim()).map(n => mark(n, false))];
+      decorations = editor.deltaDecorations(decorations, dec);
+      const pct = $("#sim-pct");
+      if (pct) pct.innerHTML = text.trim() ? `совпадение по смыслу: <b class="${cmp.equal ? "ok" : ""}">${cmp.similarity}%</b>` : "";
+    }, 250);
   };
   const t0 = Date.now(), started = new Date(r.step_started).getTime();
   current = await openIDE(view, {
@@ -611,15 +615,10 @@ async function reviewStep1(r) {
   view.innerHTML = `<div class="row" style="margin-bottom:10px"><a href="#/attempt/${r.attempt_id}" class="muted">← попытка</a><span class="grow"></span>${stepperHtml(r)}</div>
     <div class="card"><div class="row"><h2 style="margin:0">${esc(r.title)} · смотрю</h2><span class="grow"></span>
       <button class="ghost" id="r-abandon">Бросить</button><button class="primary" id="next">Понял, дальше →</button></div>
-      <p class="muted small">Слева — ваш код из попытки, справа — эталон. Отличия подсвечены. Разберитесь, что пошло не так, затем перепишите с подглядыванием.</p>
-      <div class="row small muted" style="justify-content:space-between"><span>мой код</span><span>эталон</span></div>
-      <div id="diff" style="height:calc(100vh - 290px);min-height:320px;border-radius:6px;overflow:hidden"></div></div>`;
-  await loadMonaco();
-  const a = monaco.editor.createModel(r.mine || "", "python"), b = monaco.editor.createModel(r.reference || "", "python");
-  const d = monaco.editor.createDiffEditor($("#diff"), { automaticLayout: true, readOnly: true, renderSideBySide: true, originalEditable: false,
-    minimap: { enabled: false }, fontFamily: "JetBrains Mono, Menlo, monospace", fontSize: 13, fontLigatures: false });
-  d.setModel({ original: a, modified: b });
-  current = { dispose: () => { d.dispose(); a.dispose(); b.dispose(); } };
+      <p class="muted small">Слева — эталон, справа — ваш код из попытки. По умолчанию сравнение «по смыслу»: пробелы, пустые строки и комментарии не считаются отличием. Разберитесь, что пошло не так, затем перепишите с подглядыванием.</p>
+      <div id="diff" style="height:calc(100vh - 270px);min-height:360px;border-radius:6px;overflow:hidden;background:var(--bg)"></div></div>`;
+  const dv = await diffSwitcher($("#diff"), r.mine || "", r.reference || "", ["эталон", "мой код из попытки"]);
+  current = { dispose: () => dv.dispose() };
   $("#next").onclick = async () => { await api(`/api/reviews/${r.id}/next`, { method: "POST" }); current.dispose(); current = null; viewReview(r.id); };
   $("#r-abandon").onclick = async () => {
     if (!confirm("Бросить работу над ошибками?")) return;

@@ -280,3 +280,56 @@ async function collectDrop(dataTransfer) {
   if (!entries.length) [...dataTransfer.files].forEach(f => out.push({ file: f, path: f.name }));
   return out;
 }
+
+// ---------------- сравнение «по смыслу» ----------------
+// Показываю исходный текст обеих версий, а подсвечиваю только строки, где отличается сам код
+// (пробелы, пустые строки, комментарии, кавычки и docstring — не отличие).
+const compareCode = (mine, ref) => api("/api/compare", { method: "POST", json: { mine, ref } });
+
+async function semanticView(el, mine, ref, labels = ["эталон", "мой код"]) {
+  await loadMonaco();
+  const cmp = await compareCode(mine, ref);
+  el.innerHTML = `<div class="sem-head"><span class="${cmp.equal ? "ok" : "warn"}">${cmp.equal ? "✓ по смыслу код совпадает с эталоном" : `совпадение по смыслу: ${cmp.similarity}%`}</span>
+      <span class="muted small">подсвечены только строки, где отличается сам код; комментарии эталона — серые</span></div>
+    <div class="sem-cols"><div><div class="sem-cap">${esc(labels[0])}</div><div class="sem-ed" data-s="ref"></div></div>
+      <div><div class="sem-cap">${esc(labels[1])}</div><div class="sem-ed" data-s="mine"></div></div></div>`;
+  const opts = { readOnly: true, automaticLayout: true, minimap: { enabled: false }, fontFamily: "JetBrains Mono, Menlo, monospace",
+    fontSize: 13, fontLigatures: false, scrollBeyondLastLine: false, renderLineHighlight: "none" };
+  const mk = (sel, text, marks, cls) => {
+    const ed = monaco.editor.create($(`[data-s="${sel}"]`, el), { ...opts, value: text, language: "python" });
+    ed.deltaDecorations([], [
+      ...marks.changed.map(n => ({ range: new monaco.Range(n, 1, n, 1), options: { isWholeLine: true, className: cls, linesDecorationsClassName: cls + "-glyph" } })),
+      ...marks.comments.map(n => ({ range: new monaco.Range(n, 1, n, 1), options: { isWholeLine: true, inlineClassName: "sem-comment" } })),
+    ]);
+    return ed;
+  };
+  const eds = [mk("ref", ref, cmp.ref, "sem-del"), mk("mine", mine, cmp.mine, "sem-add")];
+  // общая прокрутка двух колонок
+  eds[0].onDidScrollChange(e => { if (e.scrollTopChanged) eds[1].setScrollTop(e.scrollTop); });
+  eds[1].onDidScrollChange(e => { if (e.scrollTopChanged) eds[0].setScrollTop(e.scrollTop); });
+  return { cmp, dispose: () => eds.forEach(e => { const m = e.getModel(); e.dispose(); m && m.dispose(); }) };
+}
+
+// Переключатель «по смыслу / как написано» вокруг двух версий файла (по умолчанию — по смыслу)
+async function diffSwitcher(el, mine, ref, labels) {
+  let mode = "sem", view = null;
+  el.innerHTML = `<div class="row" style="padding:6px 8px;border-bottom:1px solid var(--line)"><div class="seg" style="margin:0">
+      <button data-d="sem">по смыслу</button><button data-d="raw">как написано</button></div></div><div class="diff-body" style="position:absolute;inset:40px 0 0 0"></div>`;
+  if (getComputedStyle(el).position === "static") el.style.position = "relative";
+  const body = $(".diff-body", el);
+  const render = async () => {
+    $$("[data-d]", el).forEach(b => b.classList.toggle("sel", b.dataset.d === mode));
+    view && view.dispose();
+    body.innerHTML = "";
+    if (mode === "sem") { body.style.overflow = "auto"; view = await semanticView(body, mine, ref, labels); return; }
+    await loadMonaco();
+    const a = monaco.editor.createModel(ref, "python"), b = monaco.editor.createModel(mine, "python");
+    const d = monaco.editor.createDiffEditor(body, { automaticLayout: true, readOnly: true, originalEditable: false, renderSideBySide: true,
+      minimap: { enabled: false }, fontFamily: "JetBrains Mono, Menlo, monospace", fontSize: 13, fontLigatures: false });
+    d.setModel({ original: a, modified: b });
+    view = { dispose: () => { d.dispose(); a.dispose(); b.dispose(); } };
+  };
+  $$("[data-d]", el).forEach(b => b.onclick = () => { mode = b.dataset.d; render(); });
+  await render();
+  return { dispose: () => view && view.dispose() };
+}

@@ -212,6 +212,7 @@ async function openIDE(root, cfg) {
     disposeDiff();
   }
   function disposeDiff() {
+    if (ide.diffView) { ide.diffView.dispose(); ide.diffView = null; }
     if (ide.diffEditor) { ide.diffEditor.dispose(); ide.diffEditor = null; }
     if (ide.diffOrig) { ide.diffOrig.dispose(); ide.diffOrig = null; }
   }
@@ -249,13 +250,11 @@ async function openIDE(root, cfg) {
         ide.editor.focus();
         cfg.onOpen && cfg.onOpen(path, m, ide);
       } else if (tab.kind === "cmp") {
-        // diff: слева эталон, справа мой код
-        const mine = await loadModel(path);
+        // diff: «по смыслу» (по умолчанию) или «как написано»; слева эталон, справа мой код
+        const mine = (await loadModel(path)).getValue();
         showViewer("");
         $("#viewer", root).style.padding = "0";
-        ide.diffEditor = monaco.editor.createDiffEditor($("#viewer", root), { automaticLayout: true, readOnly: true, fontLigatures: false,
-          fontFamily: "JetBrains Mono, Menlo, monospace", fontSize: 13, minimap: { enabled: false }, renderSideBySide: true, originalEditable: false });
-        ide.diffEditor.setModel({ original: refModel(path), modified: mine });
+        ide.diffView = await diffSwitcher($("#viewer", root), mine, cfg.refFiles[path] || "", ["эталон", "мой код"]);
       } else if (tab.kind === "table") {
         showViewer('<div class="muted spinner">читаю таблицу</div>');
         $("#viewer", root).style.padding = "";

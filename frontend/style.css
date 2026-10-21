@@ -300,3 +300,14 @@ ul.plain li.ok::before { background: var(--ok); } ul.plain li.ok { color: var(--
 .ide-top { height: auto; min-height: 46px; flex-wrap: wrap; row-gap: 6px; padding: 6px 12px; }
 #ide-buttons { flex-wrap: wrap; justify-content: flex-end; }
 .ide-top .title { min-width: 120px; flex: 1 1 140px; }
+/* сравнение по смыслу */
+.sem-head { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; padding: 8px 10px; font-size: 13px; }
+.sem-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 0 8px 8px; height: calc(100% - 40px); min-height: 260px; }
+.sem-cols > div { display: flex; flex-direction: column; min-width: 0; }
+.sem-cap { font-size: 12px; color: var(--muted); padding: 2px 4px; }
+.sem-ed { flex: 1; min-height: 240px; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.sem-del { background: rgba(239, 71, 67, .14); }
+.sem-add { background: rgba(255, 192, 30, .16); }
+.sem-del-glyph { background: var(--err); width: 4px !important; margin-left: 3px; }
+.sem-add-glyph { background: var(--warn); width: 4px !important; margin-left: 3px; }
+.sem-comment { opacity: .45; font-style: italic; }

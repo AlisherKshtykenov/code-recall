@@ -7,8 +7,9 @@ from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Response, UploadFile
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
-from . import attempts, backup, checking, llm, review, reviews, runner, stats, tasks
+from . import attempts, backup, checking, llm, review, reviews, runner, semantic, stats, tasks
 from .db import Attempt, ReviewSession, SessionLocal, Task, get_setting, init_db, set_setting
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -87,6 +88,17 @@ def journal(filter: str = "", task_id: int | None = None, db=Depends(get_db)):
     elif filter == "reviews":
         rows = [x for x in rows if x["type"] == "review"]
     return sorted(rows, key=lambda x: x["date"], reverse=True)
+
+
+class CompareIn(BaseModel):
+    mine: str = ""
+    ref: str = ""
+
+
+@app.post("/api/compare")
+def compare(body: CompareIn):
+    """Сравнение по смыслу: какие мои строки отличаются от эталона, без учёта оформления."""
+    return semantic.compare(body.mine, body.ref)
 
 
 @app.get("/api/stats")
