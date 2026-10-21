@@ -173,7 +173,9 @@ async function renderComposition(box, id) {
       return `<path d="M${p.x},${y1} C${p.x},${m} ${q.x},${m} ${q.x},${y2}" />`; }).join("");
   };
   requestAnimationFrame(draw);
-  window.addEventListener("resize", draw, { once: true });
+  // перерисовка при любом изменении размера; наблюдатель отключается, когда граф убрали со страницы
+  const ro = new ResizeObserver(() => { if (!wrap.isConnected) return ro.disconnect(); draw(); });
+  ro.observe(wrap);
 }
 
 // ---------- мастер «Новая задача» ----------
