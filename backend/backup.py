@@ -1,4 +1,8 @@
-"""Бэкап: экспорт/импорт архива и автокопия SQLite раз в день (храним 7 последних)."""
+"""Бэкап: экспорт/импорт архива и автокопия SQLite раз в день (храним 7 последних).
+
+data/backups/recall-ГГГГ-ММ-ДД.db — автокопии, ротация (KEEP последних) касается ТОЛЬКО их.
+data/backups/manual/                — ручные и предмиграционные копии (перед импортом, миграцией, правками):
+                                      не удаляются никогда. Прочие файлы в data/backups/ тоже не трогаются."""
 import io
 import json
 import sqlite3
@@ -11,6 +15,8 @@ from pathlib import Path
 from .db import DATA_DIR, DB_PATH, engine
 
 BACKUP_DIR = DATA_DIR / "backups"
+MANUAL_DIR = BACKUP_DIR / "manual"
+AUTO_PATTERN = "recall-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].db"
 KEEP = 7
 REQUIRED_TABLES = {"tasks", "task_versions", "attempts", "settings"}
 
@@ -31,8 +37,16 @@ def daily_backup() -> Path | None:
     if target.exists() or not DB_PATH.exists():
         return None
     snapshot(target)
-    for old in sorted(BACKUP_DIR.glob("recall-????-??-??.db"))[:-KEEP]:
+    for old in sorted(BACKUP_DIR.glob(AUTO_PATTERN))[:-KEEP]:  # только автокопии; manual/ и остальное — никогда
         old.unlink()
+    return target
+
+
+def manual_backup(reason: str) -> Path:
+    """Ручная / предмиграционная копия в backups/manual/ — вне ротации."""
+    MANUAL_DIR.mkdir(parents=True, exist_ok=True)
+    target = MANUAL_DIR / f"{reason}-{datetime.now():%Y-%m-%d_%H-%M-%S}.db"
+    snapshot(target)
     return target
 
 
@@ -49,9 +63,10 @@ def start_daily_thread():
 
 def list_backups() -> list[dict]:
     BACKUP_DIR.mkdir(exist_ok=True)
-    return [{"name": p.name, "size": p.stat().st_size,
+    files = [*BACKUP_DIR.glob("*.db"), *(MANUAL_DIR.glob("*.db") if MANUAL_DIR.exists() else [])]
+    return [{"name": p.relative_to(BACKUP_DIR).as_posix(), "size": p.stat().st_size, "auto": p.match(AUTO_PATTERN),
              "created": datetime.fromtimestamp(p.stat().st_mtime).isoformat(timespec="minutes")}
-            for p in sorted(BACKUP_DIR.glob("*.db"), reverse=True)]
+            for p in sorted(files, key=lambda p: p.stat().st_mtime, reverse=True)]
 
 
 def export_zip() -> bytes:
@@ -106,7 +121,8 @@ def import_zip(data: bytes) -> dict:
         incoming.unlink(missing_ok=True)
         raise
     BACKUP_DIR.mkdir(exist_ok=True)
-    saved = BACKUP_DIR / f"before-import-{datetime.now():%Y-%m-%d_%H-%M-%S}.db"
+    MANUAL_DIR.mkdir(parents=True, exist_ok=True)
+    saved = MANUAL_DIR / f"before-import-{datetime.now():%Y-%m-%d_%H-%M-%S}.db"  # вне ротации
     if DB_PATH.exists():
         snapshot(saved)
     # Пишем поверх через backup API: файл и соединения остаются прежними.

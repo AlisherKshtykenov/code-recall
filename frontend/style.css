@@ -354,3 +354,23 @@ tr[draggable="true"] { cursor: grab; }
 /* ---------- мастер ---------- */
 .opt { display: block; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; margin-bottom: 6px; cursor: pointer; }
 .opt.sel { border-color: var(--accent); }
+
+/* ---------- карта навыков ---------- */
+table.map td, table.map th { vertical-align: top; }
+table.map td { min-width: 120px; }
+table.map tr.hl td { background: rgba(255, 161, 22, .09); }
+.chip { display: inline-block; margin: 2px 2px; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-family: "JetBrains Mono", monospace;
+        border: 1px solid transparent; cursor: pointer; line-height: 1.5; background: var(--panel-2); color: var(--text); }
+.chip.planned { background: transparent; border-color: var(--line); color: var(--muted); }
+.chip.new { background: rgba(59, 130, 246, .18); color: #3b82f6; }
+.chip.learned { background: rgba(44, 187, 93, .18); color: var(--ok); }
+.chip.due { background: rgba(255, 192, 30, .2); color: var(--warn); }
+.chip.weak { background: rgba(239, 71, 67, .18); color: var(--err); }
+.chip.concept { background: transparent; border: 1px dashed var(--line); color: var(--muted); font-style: italic; }
+.chip.hl { outline: 2px solid var(--accent); }
+.legend .chip { cursor: default; }
+.tile .bar { height: 6px; border-radius: 3px; background: var(--panel-2); margin: 6px 0 2px; overflow: hidden; }
+.tile .bar i { display: block; height: 100%; background: #3b82f6; }
+.tile .bar i.ok { background: var(--ok); }
+tr.planned td { opacity: .65; }
+.planned-n { color: var(--muted); }

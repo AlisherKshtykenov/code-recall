@@ -95,6 +95,30 @@ class BrickEvent(Base):
     note = Column(Text, default="")  # что упало
 
 
+class MapRow(Base):
+    """Строка карты навыков (тип задачи из combinations.csv): ячейки по категориям — список кирпичиков."""
+    __tablename__ = "map_rows"
+    key = Column(String, primary_key=True)
+    title = Column(String, nullable=False)
+    position = Column(Integer, default=0)
+    cells = Column(Text, default="{}")  # JSON {категория: [{name, raw, note, slot_group, together}]}
+    topic_id = Column(Integer, ForeignKey("topics.id"), nullable=True)  # узел «Проекты/<строка>»
+
+
+class MapBrick(Base):
+    """Кирпичик карты. Пока задачи нет — «запланирован» (лежит в дереве без файлов).
+    Задача кирпичика — Task с name == имя кирпичика."""
+    __tablename__ = "map_bricks"
+    name = Column(String, primary_key=True)
+    kind = Column(String, default="brick")  # brick | model | concept
+    categories = Column(Text, default="[]")
+    rows = Column(Text, default="[]")  # ключи строк, где используется
+    raw = Column(Text, default="[]")  # исходные написания в CSV
+    note = Column(Text, default="")
+    related = Column(Text, default="[]")
+    topic_id = Column(Integer, ForeignKey("topics.id"), nullable=True)
+
+
 class TaskVersion(Base):
     """Снимок текстовых файлов задачи. data/ и results/ в версии не входят (они большие)."""
     __tablename__ = "task_versions"
@@ -181,8 +205,8 @@ def drop_notebook_era():
     if "references" not in tables:
         con.close()
         return
-    backups = DATA_DIR / "backups"
-    backups.mkdir(exist_ok=True)
+    backups = DATA_DIR / "backups" / "manual"  # предмиграционная копия — вне ротации автобэкапов
+    backups.mkdir(parents=True, exist_ok=True)
     dst = sqlite3.connect(backups / f"before-tasks-{datetime.now():%Y-%m-%d_%H-%M-%S}.db")
     with dst:
         con.backup(dst)

@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from . import bricks, checking, review, runner, taskfs
-from .db import Attempt, BrickEvent, SessionLocal, Slot, Task, TaskVersion, Topic
+from .db import Attempt, BrickEvent, MapBrick, SessionLocal, Slot, Task, TaskVersion, Topic
 from .tasks import commit_version, deps_ok, place, task_short
 
 router = APIRouter(prefix="/api")
@@ -28,23 +28,31 @@ def topics(db=Depends(get_db)):
     """Плоский список узлов с числом задач и «пора повторить» (в узле и во всём поддереве)."""
     nodes = db.query(Topic).order_by(Topic.position, Topic.name).all()
     today = datetime.now().date()
-    own = {n.id: [0, 0] for n in nodes}
+    own = {n.id: [0, 0, 0] for n in nodes}  # задач, пора повторить, запланировано (кирпичики карты без задачи)
+    names = set()
     for t in db.query(Task).all():
+        names.add(t.name)
         if t.topic_id in own:
             own[t.topic_id][0] += 1
             own[t.topic_id][1] += bool(t.due_at and t.due_at.date() <= today)
+    for b in db.query(MapBrick).all():
+        if b.name not in names and b.topic_id in own:
+            own[b.topic_id][2] += 1
     kids = {}
     for n in nodes:
         kids.setdefault(n.parent_id, []).append(n.id)
 
     def total(i):
-        a, b = own[i]
+        acc = list(own[i])
         for k in kids.get(i, []):
-            x, y = total(k)
-            a, b = a + x, b + y
-        return a, b
-    return [{"id": n.id, "name": n.name, "parent_id": n.parent_id, "position": n.position,
-             "tasks": own[n.id][0], "due": own[n.id][1], "total": total(n.id)[0], "total_due": total(n.id)[1]} for n in nodes]
+            acc = [x + y for x, y in zip(acc, total(k))]
+        return acc
+    out = []
+    for n in nodes:
+        tot = total(n.id)
+        out.append({"id": n.id, "name": n.name, "parent_id": n.parent_id, "position": n.position, "tasks": own[n.id][0],
+                    "due": own[n.id][1], "planned": own[n.id][2], "total": tot[0], "total_due": tot[1], "total_planned": tot[2]})
+    return out
 
 
 class TopicIn(BaseModel):

@@ -5,7 +5,7 @@ let current = null;  // открытая IDE — закрываем при ух�
 $("#theme").onclick = () => setTheme(theme() === "dark" ? "light" : "dark");
 
 const routes = { today: viewToday, tasks: viewTasks, task: viewTask, attempt: viewAttempt, edit: viewEdit,
-                 journal: viewJournal, review: viewReview, stats: viewStats, settings: viewSettings, assemble: viewAssemble };
+                 journal: viewJournal, review: viewReview, stats: viewStats, settings: viewSettings, assemble: viewAssemble, map: viewMap };
 let lastHash = location.hash, skipRoute = false;
 function route() {
   if (skipRoute) { skipRoute = false; return; }
@@ -18,7 +18,7 @@ function route() {
   lastHash = location.hash;
   if (current) { current.dispose(); current = null; }
   const [name, ...args] = location.hash.replace(/^#\/?/, "").split("/");
-  const nav = { task: "tasks", attempt: "journal", edit: "tasks", review: "journal", assemble: "tasks" }[name] || name || "today";
+  const nav = { task: "tasks", attempt: "journal", edit: "tasks", review: "journal", assemble: "tasks", map: "map" }[name] || name || "today";
   $$(".topbar nav a").forEach(a => a.classList.toggle("active", a.dataset.r === nav));
   document.body.classList.remove("ide-mode");
   view.innerHTML = '<div class="muted spinner">загрузка</div>';
@@ -75,7 +75,7 @@ async function viewToday() {
 const lib = { q: "", kind: "", status: "", tags: [], topic: undefined, sort: "title", dir: 1 };
 async function viewTasks() {
   // дерево тем — необязательная часть: не загрузилось — библиотека всё равно открывается, без дерева
-  const [rawTasks, topics] = await Promise.all([api("/api/tasks"), apiList("/api/topics")]);
+  const [rawTasks, topics, planned] = await Promise.all([api("/api/tasks"), apiList("/api/topics"), apiList("/api/map/planned")]);
   const tasks = arr(rawTasks).map(normTask);
   lib.topic ??= store.get("lib.topic", null);
   if (lib.topic != null && !topics.some(t => t.id === lib.topic)) lib.topic = null;
@@ -92,7 +92,8 @@ async function viewTasks() {
           <button class="icon-btn" id="tree-toggle" title="показать / скрыть дерево тем">☰</button>
           <input id="q" placeholder="Поиск задач" value="${esc(lib.q)}" style="min-width:200px">
           <select id="f-kind"><option value="">Все типы</option><option value="algo" ${lib.kind === "algo" ? "selected" : ""}>Алгоритм</option><option value="ml" ${lib.kind === "ml" ? "selected" : ""}>ML</option></select>
-          <select id="f-status"><option value="">Любой статус</option>${Object.entries(STATUS).map(([k, v]) => `<option value="${k}" ${lib.status === k ? "selected" : ""}>${v[2]}</option>`).join("")}</select>
+          <select id="f-status"><option value="">Любой статус</option>${Object.entries(STATUS).map(([k, v]) => `<option value="${k}" ${lib.status === k ? "selected" : ""}>${v[2]}</option>`).join("")}
+            <option value="planned" ${lib.status === "planned" ? "selected" : ""}>запланировано</option><option value="noplan" ${lib.status === "noplan" ? "selected" : ""}>без запланированных</option></select>
         </div>
         ${allTags.length ? `<div class="row" style="margin-bottom:10px;flex-wrap:wrap"><span class="muted small">теги:</span>${allTags.map(g => `<button class="small ${lib.tags.includes(g) ? "sel" : "ghost"}" data-tag="${esc(g)}">${esc(g)}</button>`).join("")}</div>` : ""}
         <div class="scroll-x"><table><thead><tr>${cols.map(([k, n]) => `<th class="sort" data-k="${k}">${n}${lib.sort === k ? (lib.dir > 0 ? " ↑" : " ↓") : ""}</th>`).join("")}</tr></thead>
@@ -103,7 +104,8 @@ async function viewTasks() {
   let kids = {};
   const render = () => {
     const inTopic = lib.topic == null ? null : new Set(subtreeIds(kids, lib.topic));
-    const rows = tasks.filter(t => (!lib.kind || t.kind === lib.kind) && (!lib.status || t.status === lib.status)
+    const st = ["planned", "noplan"].includes(lib.status) ? "" : lib.status;
+    const rows = tasks.filter(t => lib.status !== "planned" && (!lib.kind || t.kind === lib.kind) && (!st || t.status === st)
         && (!inTopic || inTopic.has(t.topic_id)) && lib.tags.every(g => t.tags.includes(g))
         && (t.title + " " + t.name + " " + t.topic + " " + t.tags.join(" ")).toLowerCase().includes(lib.q.toLowerCase()))
       .sort((a, b) => {
@@ -112,6 +114,8 @@ async function viewTasks() {
         if (x == null) return 1; if (y == null) return -1;
         return (typeof x === "string" ? x.localeCompare(y) : x - y) * lib.dir;
       });
+    const plan = lib.status && lib.status !== "planned" || lib.kind || lib.tags.length ? [] : planned.filter(p => (!inTopic || inTopic.has(p.topic_id))
+      && (p.name + " " + p.note + " " + arr(p.categories).join(" ")).toLowerCase().includes(lib.q.toLowerCase()));
     $("#rows").innerHTML = rows.map(t => `<tr class="link" data-id="${t.id}" draggable="true" title="перетащите на узел дерева, чтобы перенести">
       <td style="width:28px">${statusCell(t.status)}</td>
       <td><span class="title">${esc(t.title)}</span>${t.active_attempt ? ' <span class="badge warn">в процессе</span>' : ""}
@@ -121,6 +125,10 @@ async function viewTasks() {
       <td>${kindBadge(t.kind)}</td><td class="muted small">${esc(t.topic || "—")}</td>
       <td>${t.best_score != null ? `<span class="${t.best_score >= 70 ? "ok" : t.best_score >= 50 ? "warn" : "err"}">${t.best_score}</span>` : '<span class="muted">—</span>'}</td>
       <td class="muted">${t.attempts}</td><td class="muted nowrap">${t.due_at ? t.due_at.slice(0, 10) : "—"}</td></tr>`).join("")
+      + plan.map(p => `<tr class="link planned" data-plan="${esc(p.name)}" title="кирпичик карты — задачи ещё нет; клик — создать в мастере">
+        <td style="width:28px"><span class="status-ico muted">◌</span></td><td><span class="title">${esc(p.name)}</span> <span class="badge">${p.kind === "concept" ? "концепт" : "запланировано"}</span>
+          ${p.note ? `<div class="muted small">${esc(p.note)}</div>` : ""}</td><td></td><td class="muted small">${esc(topicPath(topics, p.topic_id) || "—")}</td>
+        <td class="muted">—</td><td class="muted">—</td><td class="muted small">в ${p.rows.length} стр. карты</td></tr>`).join("")
       || '<tr><td colspan="7" class="empty">ничего не найдено</td></tr>';
     $$("#rows tr[data-id]").forEach(tr => tr.ondragstart = e => e.dataTransfer.setData("text/task", tr.dataset.id));
   };
@@ -134,7 +142,11 @@ async function viewTasks() {
   $("#f-kind").onchange = e => { lib.kind = e.target.value; render(); };
   $("#f-status").onchange = e => { lib.status = e.target.value; render(); };
   $$("th.sort").forEach(th => th.onclick = () => { lib.dir = lib.sort === th.dataset.k ? -lib.dir : 1; lib.sort = th.dataset.k; viewTasks(); });
-  $("#rows").onclick = e => { const tr = e.target.closest("tr[data-id]"); if (tr) location.hash = `#/task/${tr.dataset.id}`; };
+  $("#rows").onclick = e => {
+    const tr = e.target.closest("tr[data-id]"), pl = e.target.closest("tr[data-plan]");
+    if (tr) location.hash = `#/task/${tr.dataset.id}`;
+    if (pl) { const p = planned.find(x => x.name === pl.dataset.plan); openChip({ ...p, status: "planned" }); }
+  };
   $("#upload").onclick = uploadDialog;
   $("#new").onclick = () => wizardDialog({ topic_id: lib.topic });
 }
@@ -887,6 +899,7 @@ async function viewSettings() {
       <div class="row mt"><label>Ollama URL</label><input id="o-url" class="grow" value="${esc(s.ollama_url)}"><label>модель</label><input id="o-model" value="${esc(s.ollama_model)}"></div>
       <div class="row mt"><label>Groq модель</label><input id="g-model" class="grow" value="${esc(s.groq_model)}"><span class="${s.groq_key_set ? "ok" : "warn"} small">GROQ_API_KEY ${s.groq_key_set ? "задан" : "не задан (.env)"}</span></div>
       <div class="row mt"><button id="test">Проверить связь</button><span id="test-out" class="small"></span></div></div>
+    <div class="card" id="map-card"></div>
     <div class="card"><h3>Бэкап</h3>
       <p class="muted small">Экспорт — один .zip: база (задачи, версии, попытки, расписание, настройки) и текстовые файлы задач. Датасеты из data/ в архив не входят.
         Импорт заменяет базу; текущая перед этим сохраняется в data/backups/. Автокопия базы — раз в день, хранятся 7 последних.</p>
@@ -904,6 +917,7 @@ async function viewSettings() {
     $("#test-out").innerHTML = r.ok ? `<span class="ok">ok</span> · ${esc(r.provider)} · ${esc(r.model)} · ${(r.ms / 1000).toFixed(1)} с: «${esc(r.answer)}»` : `<span class="err">нет связи: ${esc(r.answer)}</span>`;
   };
   const list = l => { $("#bk-list").innerHTML = l.map(b => `${esc(b.name)} · ${fmtSize(b.size)} · ${fmtDate(b.created)}`).join("<br>") || "копий нет"; };
+  mapSettingsCard($("#map-card"));
   api("/api/backup/list").then(list);
   $("#bk-now").onclick = async () => { const r = await api("/api/backup/now", { method: "POST" }); list(r.backups); toast(r.made ? `создана ${r.made}` : "сегодняшняя копия уже есть"); };
   $("#imp").onclick = () => $("#imp-file").click();

@@ -56,7 +56,7 @@ function renderTopicTree(box, topics, state, onChange) {
     const has = (kids[t.id] || []).length, open = !collapsed.has(t.id);
     return `<div class="tnode ${state.topic === t.id ? "sel" : ""}" data-topic="${t.id}" draggable="true" style="padding-left:${8 + d * 14}px">
         <span class="caret" data-caret="${t.id}">${has ? (open ? "▾" : "▸") : ""}</span><span class="tname grow">${esc(t.name)}</span>
-        <span class="tcount" title="задач в узле и ниже · пора повторить">${t.total}${t.total_due ? ` · <span class="warn">${t.total_due}</span>` : ""}</span>
+        <span class="tcount" title="задач в узле и ниже · пора повторить · запланировано">${t.total}${t.total_due ? ` · <span class="warn">${t.total_due}</span>` : ""}${t.total_planned ? ` · <span class="planned-n">◌${t.total_planned}</span>` : ""}</span>
         <span class="tact"><button class="icon-btn" data-add="${t.id}" title="подузел">＋</button><button class="icon-btn" data-ren="${t.id}" title="переименовать">✎</button><button class="icon-btn" data-del="${t.id}" title="удалить узел (задачи перейдут выше)">✕</button></span></div>
       ${has && open ? (kids[t.id] || []).map(k => row(k, d + 1)).join("") : ""}`;
   };
@@ -198,7 +198,7 @@ const WIZ_REF = "def solve(xs):\n    return sorted(xs)\n";
 const WIZ_TEST = "from solution import solve\n\n\ndef test_example():\n    assert solve([3, 1, 2]) == [1, 2, 3]\n";
 async function wizardDialog(preset = {}) {
   const [topics, tasks, slots] = await Promise.all([apiList("/api/topics"), apiList("/api/tasks"), apiList("/api/slots")]);
-  const st = { step: 1, title: "", topic_id: preset.topic_id ?? null, tags: "", kind: "algo", type: "plain", implements: "", newSlot: "",
+  const st = { step: 1, title: preset.title || "", topic_id: preset.topic_id ?? null, tags: "", kind: "algo", type: "plain", implements: "", newSlot: "",
                files: { "reference/solution.py": WIZ_REF, "tests/test_solution.py": WIZ_TEST }, deps: [], cur: "reference/solution.py" };
   const back = document.createElement("div");
   back.className = "modal-back";

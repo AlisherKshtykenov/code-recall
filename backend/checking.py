@@ -38,7 +38,9 @@ def ref_key(version: TaskVersion, python: str, deps: str = "") -> str:
 def suite(db, task: Task, files: dict, assembly: dict, mine: dict) -> tuple[dict, dict]:
     """(код для прогона, тесты): мои файлы + кирпичики (bricks/, slots/) + тесты задачи и контрактные тесты слота."""
     code, lib = bricks.assemble(db, task, files, assembly, mine)
-    return {**lib, **code}, {**taskfs.test_files(files), **bricks.contract_tests(db, files)}
+    # task.json — в папку прогона: тест-запрет читает из него список запрещённых имён ("forbidden")
+    meta = {"task.json": files["task.json"]} if "task.json" in files else {}
+    return {**lib, **code}, {**taskfs.test_files(files), **bricks.contract_tests(db, files), **meta}
 
 
 def reference_results(task: Task, version: TaskVersion, python: str, job=None, force=False) -> dict:

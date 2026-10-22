@@ -13,3 +13,4 @@ time_series,"arima, lstm, prophet","missing (ffill), transformation","recurrent,
 text_to_speech,"tacotron2, fastspeech, vits, hifigan","нормализация текста, аудио","embedding, attention, conv1d","relu, tanh","mel_spectrogram, adversarial",adam,"mos, mel-ошибка","ablation, leaderboard"
 speech_recognition,"ctc_lstm, whisper",аудио признаки,"conv1d, recurrent / attention","relu, gelu, softmax","ctc, cross_entropy",adamw,"wer, cer",benchmark_table
 generative,"gan, vae, diffusion","scaling в [-1,1]","conv, conv_transpose, attention","leaky_relu, tanh","adversarial, kl_divergence, diffusion",adam,fid,learning_curve
+defect_detection,"baseline_cnn, resnet, efficientnet","normalize_images, stratified_split, class_weights","conv2d, max_pool2d, batch_norm, dropout, flatten, linear","relu, sigmoid","log_loss, weighted_cross_entropy",adam,"recall, f1, confusion_matrix, pr_auc","holdout_eval, learning_curve, ablation, benchmark_table"
