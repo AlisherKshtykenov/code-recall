@@ -1,0 +1,4 @@
+{"name": "loss", "symbol": "loss", "title": "Функция потерь",
+ "signature": "def loss(y_pred: torch.Tensor, y_true: torch.Tensor) -> torch.Tensor  # скаляр",
+ "description": "Функция потерь: предсказание модели (вероятность, логит или число) и ответ той же формы -> скаляр (reduction='mean' по умолчанию), дифференцируемый по y_pred.",
+ "default": "log_loss"}

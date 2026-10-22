@@ -1,0 +1,4 @@
+{"name": "optimizer", "symbol": "optimizer", "title": "Оптимизатор",
+ "signature": "class optimizer(params, lr=...):  step(); zero_grad(set_to_none=True); param_groups",
+ "description": "Оптимизатор как в torch.optim: конструктор принимает параметры (тензоры или группы-словари) и lr; step() обновляет параметры по их .grad; zero_grad() сбрасывает градиенты.",
+ "default": "adam"}

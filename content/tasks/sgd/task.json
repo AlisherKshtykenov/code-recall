@@ -1,0 +1,33 @@
+{
+  "title": "sgd (стохастический градиентный спуск, momentum)",
+  "kind": "ml",
+  "topic": "ML/Обучение/Optimizers",
+  "tags": [
+    "optimizers",
+    "torch",
+    "defect_detection"
+  ],
+  "implements": "optimizer",
+  "main": "solution.py",
+  "timeout": 90,
+  "library": "torch.optim.SGD",
+  "map_notes": {
+    "defect_detection": "в стене «сравнение»: ablation adam против sgd"
+  },
+  "forbidden": {
+    "modules": [
+      "torch.optim"
+    ],
+    "names": [
+      "optim",
+      "Optimizer",
+      "Adam",
+      "AdamW",
+      "SGD",
+      "adam",
+      "sgd",
+      "_functional",
+      "_foreach_add_"
+    ]
+  }
+}

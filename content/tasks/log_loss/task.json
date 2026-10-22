@@ -1,0 +1,8 @@
+{
+  "title": "log_loss (бинарная кросс-энтропия)", "kind": "ml", "topic": "ML/Обучение/Losses",
+  "tags": ["losses", "torch", "sklearn", "defect_detection"], "implements": "loss", "main": "solution.py", "timeout": 60,
+  "library": "torch.nn.functional.binary_cross_entropy и sklearn.metrics.log_loss",
+  "map_notes": {"defect_detection": "базовая потеря для «брак / не брак» по вероятности", "classification · logistic_regression": "потеря логистической регрессии"},
+  "forbidden": {"modules": ["sklearn", "torch.nn", "torch.nn.functional", "scipy"],
+                "names": ["log_loss", "BCELoss", "BCEWithLogitsLoss", "binary_cross_entropy_with_logits", "cross_entropy", "nll_loss", "xlogy", "nn", "functional", "special"]}
+}

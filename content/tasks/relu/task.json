@@ -1,0 +1,8 @@
+{
+  "title": "relu", "kind": "ml", "topic": "ML/Нейросети/Activations",
+  "tags": ["activations", "torch", "defect_detection"], "implements": "activation", "main": "solution.py", "timeout": 60,
+  "library": "torch.relu",
+  "map_notes": {"defect_detection": "после каждого batch_norm в conv_block"},
+  "forbidden": {"modules": ["torch.nn", "torch.nn.functional"],
+                "names": ["relu", "relu_", "clamp", "clamp_min", "clip", "maximum", "max", "threshold", "hardtanh", "ReLU", "nn", "functional"]}
+}

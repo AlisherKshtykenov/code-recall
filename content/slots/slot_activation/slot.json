@@ -1,0 +1,4 @@
+{"name": "activation", "symbol": "activation", "title": "Функция активации",
+ "signature": "def activation(x: torch.Tensor) -> torch.Tensor  # поэлементно, та же форма",
+ "description": "Поэлементная нелинейность: тензор той же формы и dtype, дифференцируемая (градиент через autograd).",
+ "default": "relu"}

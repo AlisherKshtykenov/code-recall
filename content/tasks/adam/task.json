@@ -1,0 +1,33 @@
+{
+  "title": "adam (оптимизатор Adam)",
+  "kind": "ml",
+  "topic": "ML/Обучение/Optimizers",
+  "tags": [
+    "optimizers",
+    "torch",
+    "defect_detection"
+  ],
+  "implements": "optimizer",
+  "main": "solution.py",
+  "timeout": 90,
+  "library": "torch.optim.Adam",
+  "map_notes": {
+    "defect_detection": "оптимизатор baseline_cnn в стене"
+  },
+  "forbidden": {
+    "modules": [
+      "torch.optim"
+    ],
+    "names": [
+      "optim",
+      "Optimizer",
+      "Adam",
+      "AdamW",
+      "SGD",
+      "adam",
+      "sgd",
+      "_functional",
+      "_foreach_add_"
+    ]
+  }
+}

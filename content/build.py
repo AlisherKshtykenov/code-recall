@@ -39,6 +39,8 @@ def prepare():
         (task / "tests").mkdir(exist_ok=True)
         shutil.copy(ROOT / "common" / "test_rules.py", task / "tests" / "test_rules.py")
         shutil.copy(ROOT / "common" / "likelib.py", task / "tests" / "likelib.py")
+        if meta(task).get("implements") == "optimizer":
+            shutil.copy(ROOT / "common" / "optimlib.py", task / "tests" / "optimlib.py")
         readme = task / "description.md"
         text = readme.read_text(encoding="utf-8")
         if START in text:
