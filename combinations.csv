@@ -1,0 +1,15 @@
+задача,модели,preprocessing,layers,activations,losses,optimizers,metrics,comparison
+regression,"linear_regression, ridge, lasso","scaling, missing, encoding",dense (1 слой),identity,"mse, mae, huber","batch_gd, sgd, lbfgs","mae, rmse, r2","cross_validation, dummy_mean"
+regression (деревья),"decision_tree, random_forest, gradient_boosting","missing, encoding (scaling не нужен)",нет,нет,"mse, huber",бустинг по деревьям,"mae, rmse, r2","cross_validation, grid_search"
+classification,logistic_regression,"scaling, encoding, imbalance",dense (1 слой),sigmoid / softmax,"log_loss, cross_entropy, focal","sgd, adam, lbfgs","f1, roc_auc, pr_auc","stratified cv, dummy_most_frequent, mcnemar"
+classification,svm,scaling,нет (ядро),нет,hinge,second_order / SMO,"f1, roc_auc","grid_search, stratified cv"
+clustering,"kmeans, dbscan, gaussian_mixture","scaling, outliers",нет,нет,inertia / likelihood,итерации EM,"silhouette, davies_bouldin, ari","elbow_method, silhouette по k"
+dimensionality_reduction,autoencoder,scaling,"dense, conv","relu, sigmoid на выходе","reconstruction, kl_divergence (vae)",adam,reconstruction error,ablation по размеру
+image_classification,"resnet, efficientnet, vit","normalization картинок, splitting","conv2d, pooling, batch_norm, residual / attention","relu, gelu, softmax",cross_entropy,"adamw + cosine_annealing, warmup","accuracy, f1","learning_curve, scratch vs pretrained"
+segmentation,"unet, deeplab",splitting,"conv2d, conv_transpose, skip_connection","relu, sigmoid","dice, cross_entropy",adam,"iou, dice",ablation
+face_recognition,"facenet, arcface",splitting по людям (group_kfold),"conv2d, residual, dense (эмбеддинг)",relu,"triplet, arcface, contrastive","adam, sgd+momentum","roc_auc, accuracy верификации",benchmark_table
+text_classification,"lstm, bert",encoding (токены),"embedding, recurrent / attention, layer_norm","tanh, gelu, softmax",cross_entropy,adamw + warmup,"f1, accuracy","dummy_most_frequent, bootstrap_ci"
+time_series,"arima, lstm, prophet","missing (ffill), transformation","recurrent, dense","tanh, identity","mse, mae",adam,"mae, mape","time_series_split, simple_model (наивный прогноз)"
+text_to_speech,"tacotron2, fastspeech, vits, hifigan","нормализация текста, аудио","embedding, attention, conv1d","relu, tanh","mel_spectrogram, adversarial",adam,"mos, mel-ошибка","ablation, leaderboard"
+speech_recognition,"ctc_lstm, whisper",аудио признаки,"conv1d, recurrent / attention","relu, gelu, softmax","ctc, cross_entropy",adamw,"wer, cer",benchmark_table
+generative,"gan, vae, diffusion","scaling в [-1,1]","conv, conv_transpose, attention","leaky_relu, tanh","adversarial, kl_divergence, diffusion",adam,fid,learning_curve
