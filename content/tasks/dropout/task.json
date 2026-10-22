@@ -1,0 +1,7 @@
+{
+  "title": "dropout", "kind": "ml", "topic": "ML/Нейросети/Layers",
+  "tags": ["layers", "torch", "regularization", "defect_detection"], "main": "solution.py", "timeout": 60, "library": "torch.nn.functional.dropout",
+  "map_notes": {"defect_detection": "перед последним linear в baseline_cnn; в стене «сравнение» — ablation с ним и без"},
+  "forbidden": {"modules": ["torch.nn", "torch.nn.functional"],
+                "names": ["dropout", "dropout_", "Dropout", "dropout2d", "alpha_dropout", "feature_alpha_dropout", "native_dropout", "fused_dropout", "nn", "functional"]}
+}

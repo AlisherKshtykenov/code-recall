@@ -1,0 +1,6 @@
+{
+  "title": "flatten", "kind": "ml", "topic": "ML/Нейросети/Layers",
+  "tags": ["layers", "torch", "defect_detection"], "main": "solution.py", "timeout": 60, "library": "torch.flatten",
+  "map_notes": {"defect_detection": "между свёрточной частью baseline_cnn и linear"},
+  "forbidden": {"modules": ["torch.nn", "torch.nn.functional", "numpy"], "names": ["flatten", "ravel", "unflatten", "Flatten", "view_as", "nn", "functional"]}
+}
