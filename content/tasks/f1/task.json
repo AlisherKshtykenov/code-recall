@@ -1,0 +1,15 @@
+{
+  "title": "f1 (F1-мера)",
+  "kind": "ml",
+  "topic": "ML/Оценка/Metrics",
+  "tags": ["metrics", "sklearn", "defect_detection"],
+  "implements": "metric",
+  "main": "solution.py",
+  "timeout": 60,
+  "library": "sklearn.metrics.f1_score",
+  "deps": [{"name": "confusion_matrix", "task": "confusion_matrix"}],
+  "forbidden": {
+    "modules": ["sklearn", "torchmetrics", "scipy"],
+    "names": ["f1_score", "fbeta_score", "precision_recall_fscore_support", "precision_score", "recall_score", "multilabel_confusion_matrix", "classification_report"]
+  }
+}

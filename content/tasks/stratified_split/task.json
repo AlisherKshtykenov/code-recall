@@ -1,0 +1,14 @@
+{
+  "title": "stratified_split (стратифицированное разбиение train/test)",
+  "kind": "ml",
+  "topic": "ML/Данные/Preprocessing",
+  "tags": ["preprocessing", "sklearn", "split", "defect_detection"],
+  "main": "solution.py",
+  "timeout": 60,
+  "library": "sklearn.model_selection.train_test_split(stratify=y)",
+  "map_notes": {"defect_detection": "брака ~10%: без стратификации в тест может попасть 0 или 30% брака"},
+  "forbidden": {
+    "modules": ["sklearn"],
+    "names": ["train_test_split", "StratifiedShuffleSplit", "StratifiedKFold", "ShuffleSplit"]
+  }
+}

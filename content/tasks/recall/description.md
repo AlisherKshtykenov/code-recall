@@ -42,10 +42,13 @@ recall_score(y_mc_true, y_mc_pred, average="macro")  # несколько кла
 
 ## Где используется на карте
 
-- [defect_detection](#/map/recall) — главная метрика: пропущенный брак дороже ложной тревоги.
+<!-- map:start -->
+- [defect_detection](#/map/recall) — главная метрика: пропущенный брак дороже ложной тревоги
+<!-- map:end -->
 
 ## Задача
 
 Напишите `recall_score` своими руками в `solution.py` — **та же сигнатура и тот же результат**, что у sklearn, включая ошибки и предупреждения.
+TP и число настоящих объектов класса берите из своей матрицы ошибок: `from bricks.confusion_matrix import confusion_matrix`.
 Можно numpy (сравнения, `sum`, `unique`, индексация). Нельзя `sklearn`, `torchmetrics` и любые готовые функции полноты.
 В конце файла — `metric = recall_score`: так кирпичик реализует слот **metric**.

@@ -1,0 +1,14 @@
+{
+  "title": "class_weights (веса классов при дисбалансе)",
+  "kind": "ml",
+  "topic": "ML/Данные/Preprocessing",
+  "tags": ["preprocessing", "sklearn", "imbalance", "defect_detection"],
+  "main": "solution.py",
+  "timeout": 60,
+  "library": "sklearn.utils.class_weight.compute_class_weight",
+  "map_notes": {"defect_detection": "брака ~10% — вес брака в 9 раз больше, отсюда pos_weight для weighted_cross_entropy"},
+  "forbidden": {
+    "modules": ["sklearn", "torch"],
+    "names": ["compute_class_weight", "compute_sample_weight", "bincount", "unique_counts"]
+  }
+}

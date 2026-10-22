@@ -29,9 +29,9 @@ def test_no_forbidden_names():
     banned = set(FORBIDDEN.get("names", []))
     used, imported = set(), set()
     for node in ast.walk(tree()):
-        if isinstance(node, ast.Name) and node.id in banned:
-            used.add(node.id)
-        elif isinstance(node, ast.Attribute) and node.attr in banned:
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in banned:
+            used.add(node.func.id)  # вызов по имени: recall_score(...); переменная std = ... — не нарушение
+        elif isinstance(node, ast.Attribute) and node.attr in banned:  # torch.std, x.std(), TF.normalize
             used.add(node.attr)
         elif isinstance(node, ast.alias) and (node.name.split(".")[-1] in banned or (node.asname or "") in banned):
             imported.add(node.name.split(".")[-1])  # и «import recall_score as r» — по настоящему имени

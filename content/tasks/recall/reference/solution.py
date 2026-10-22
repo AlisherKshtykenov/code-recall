@@ -1,7 +1,10 @@
-"""recall (полнота) своими руками — та же сигнатура и тот же результат, что sklearn.metrics.recall_score."""
+"""recall (полнота) своими руками — та же сигнатура и тот же результат, что sklearn.metrics.recall_score.
+TP и число настоящих объектов класса берутся из матрицы ошибок — кирпичика confusion_matrix."""
 import warnings
 
 import numpy as np
+
+from bricks.confusion_matrix import confusion_matrix
 
 
 class UndefinedMetricWarning(UserWarning):
@@ -32,6 +35,9 @@ def recall_score(y_true, y_pred, *, labels=None, pos_label=1, average="binary", 
         raise ValueError("Found empty input array: нужен хотя бы один объект")
     if len(y_true) != len(y_pred):  # каждому ответу — одно предсказание
         raise ValueError(f"Found input variables with inconsistent numbers of samples: [{len(y_true)}, {len(y_pred)}]")
+    for y in (y_true, y_pred):  # метки классов, а не непрерывные числа
+        if y.dtype.kind == "f" and np.any(y != np.round(y)):
+            raise ValueError("Classification metrics can't handle continuous targets")
     if average not in AVERAGES:  # неизвестный способ усреднения
         raise ValueError(f"average должен быть одним из {AVERAGES}, а не {average!r}")
     if average == "samples":  # усреднение по объектам бывает только в multilabel
@@ -48,8 +54,12 @@ def recall_score(y_true, y_pred, *, labels=None, pos_label=1, average="binary", 
     else:
         classes = present if labels is None else np.asarray(labels)  # labels — какие классы считать и в каком порядке
 
-    tp = np.array([weights[(y_true == c) & (y_pred == c)].sum() for c in classes])  # нашли: правда c и предсказали c
-    support = np.array([weights[y_true == c].sum() for c in classes])  # всего настоящих c (TP + FN)
+    with warnings.catch_warnings():  # матрица 1×1 предупреждает «один класс» — для полноты это нормально
+        warnings.simplefilter("ignore", UserWarning)
+        cm = confusion_matrix(y_true, y_pred, sample_weight=weights)  # строки — правда, столбцы — прогноз, порядок = present
+    index = {label: i for i, label in enumerate(present.tolist())}  # метка -> номер строки матрицы
+    tp = np.array([cm[index[c], index[c]] if c in index else 0.0 for c in classes.tolist()], dtype=float)  # диагональ: нашли c
+    support = np.array([cm[index[c]].sum() if c in index else 0.0 for c in classes.tolist()], dtype=float)  # строка: всего настоящих c
 
     if average == "micro":  # общий TP / общий (TP + FN) по всем выбранным классам
         if support.sum() == 0:
