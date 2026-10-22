@@ -1,0 +1,60 @@
+# learning_curve (кривая обучения)
+
+**Что делает.** Обучает модель на всё большей части обучающих данных (10%, 32%, …, 100%) и для каждого размера измеряет качество на train и на отложенном фолде кросс-валидации. По кривой видно, поможет ли собрать больше данных и где модель переобучается.
+
+- train высоко, test низко и **растёт** — переобучение, больше данных поможет;
+- обе кривые низко и сошлись — модели не хватает сложности, данные не помогут;
+- обе высоко и сошлись — всё хорошо.
+
+## Как это делают в жизни
+
+```python
+import numpy as np
+from sklearn.model_selection import learning_curve, LearningCurveDisplay
+from sklearn.linear_model import LogisticRegression
+
+sizes, train_scores, test_scores = learning_curve(
+    LogisticRegression(max_iter=1000), X, y,     # любая модель sklearn и данные
+    train_sizes=np.linspace(0.1, 1.0, 5),        # доли обучающей части фолда
+    cv=5,                                        # 5 фолдов (для классификатора — стратифицированные)
+    scoring="recall",                            # что считаем качеством
+)
+test_scores.mean(axis=1)                         # средняя по фолдам для каждого размера
+LearningCurveDisplay.from_estimator(model, X, y)  # сразу график
+```
+
+## Параметры `learning_curve` (основные)
+
+| Параметр | По умолчанию | Что значит |
+|---|---|---|
+| `estimator` | — | модель с `fit` / `predict` / `score` (клонируется для каждой точки) |
+| `X`, `y` | — | данные |
+| `train_sizes` | `linspace(0.1, 1.0, 5)` | доли (0, 1] или числа объектов от самого большого train |
+| `cv` | `None` | `None` = 5, число фолдов, splitter (`KFold`, `StratifiedKFold`, …) или список `(train, test)` |
+| `scoring` | `None` | `None` — `estimator.score`; функция `scorer(est, X, y)` |
+| `shuffle` | `False` | перемешать train каждого фолда перед отбором первых n |
+| `random_state` | `None` | seed для `shuffle` |
+| `error_score` | `np.nan` | если обучение на точке упало (например, в маленьком train один класс): записать это значение и предупредить; `"raise"` — бросить ошибку. Упали все — `ValueError` |
+| `return_times` | `False` | ещё вернуть время обучения и оценки |
+
+Не повторяем: `groups` — только передаётся в splitter, `exploit_incremental_learning`, `n_jobs`, `pre_dispatch`, `verbose`, `params`; `scoring` строкой (`"recall"`) — передайте функцию.
+
+## Подводные камни
+
+1. **Без `shuffle` берутся первые n объектов фолда.** Если данные отсортированы (сначала весь брак), маленький train будет из одного класса — ошибка или бессмысленная точка.
+2. **Нужна стратификация.** С 10% брака маленький train может не содержать брака вовсе.
+3. **Для нейросетей дорого:** каждая точка — полное обучение. Для CNN кривую строят по 2–3 размерам и 3 фолдам или по эпохам.
+4. **Смотрите разброс.** `std` по фолдам при маленьких выборках бывает больше разницы между точками.
+
+## Где используется на карте
+
+<!-- map:start -->
+- [image_classification](#/map/learning_curve)
+- [generative](#/map/learning_curve)
+- [defect_detection](#/map/learning_curve) — поможет ли собрать больше фото брака: кривая test ещё растёт?
+<!-- map:end -->
+
+## Задача
+
+Напишите `learning_curve(estimator, X, y, *, groups=None, train_sizes=…, cv=None, scoring=None, shuffle=False, random_state=None, return_times=False)` своими руками в `solution.py`: на `LogisticRegression` и `LinearRegression` размеры и оценки совпадают со sklearn при любом `cv` (число, splitter, список), `train_sizes`, `shuffle`.
+Стратифицированные и обычные фолды по числу `cv` напишите сами (как `StratifiedKFold` / `KFold` без перемешивания). Можно numpy и `copy.deepcopy` для копии модели. Нельзя `sklearn` внутри решения.

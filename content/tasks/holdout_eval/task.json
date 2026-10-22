@@ -1,0 +1,8 @@
+{
+  "title": "holdout_eval (оценка на отложенной выборке)", "kind": "ml", "topic": "ML/Оценка/Comparison",
+  "tags": ["comparison", "sklearn", "defect_detection"], "main": "solution.py", "timeout": 120,
+  "library": "нет: train_test_split(stratify=y) + fit + метрики на test",
+  "deps": [{"name": "stratified_split", "task": "stratified_split"}],
+  "map_notes": {"defect_detection": "одна честная оценка baseline на отложенных 20%"},
+  "forbidden": {"modules": ["sklearn"], "names": ["train_test_split", "cross_validate", "cross_val_score", "clone"]}
+}

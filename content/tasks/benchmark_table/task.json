@@ -1,0 +1,7 @@
+{
+  "title": "benchmark_table (сводная таблица экспериментов)", "kind": "ml", "topic": "ML/Оценка/Comparison",
+  "tags": ["comparison", "pandas", "defect_detection"], "main": "solution.py", "timeout": 60,
+  "library": "нет: pandas.DataFrame(records).sort_values(…) (на практике — W&B / MLflow таблицы)",
+  "map_notes": {"defect_detection": "baseline_cnn и варианты ablation — по recall"},
+  "forbidden": {"modules": ["wandb", "mlflow"], "names": ["from_records", "json_normalize"]}
+}

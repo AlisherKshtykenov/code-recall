@@ -1,0 +1,51 @@
+# ablation (абляция: по одной детали за раз)
+
+**Что делает.** Проверяет, какая деталь эксперимента реально помогает: берёт базовую конфигурацию и по одному меняет параметры (убрать веса классов, заменить adam на sgd, выключить dropout), каждый раз обучая и оценивая заново. Разница с base показывает вклад детали.
+
+## Как это делают в жизни
+
+Готовой функции нет — это цикл по конфигурациям (в больших проектах — Hydra `--multirun`, W&B sweeps):
+
+```python
+base = {"weights": True, "optimizer": "adam", "dropout": 0.5}
+variants = {"без весов": {"weights": False}, "sgd": {"optimizer": "sgd"}, "без dropout": {"dropout": 0.0}}
+rows = []
+for name, changes in [("base", {}), *variants.items()]:
+    cfg = {**base, **changes}                    # меняем ровно одну деталь
+    metrics = train_and_evaluate(**cfg)          # обучить и оценить (свой код)
+    rows.append({"variant": name, **metrics})
+pd.DataFrame(rows).sort_values("recall", ascending=False)  # см. benchmark_table
+```
+
+## Параметры (наша функция)
+
+| Параметр | По умолчанию | Что значит |
+|---|---|---|
+| `build_fn` | — | `build_fn(**config) -> {метрика: значение}`: обучить и оценить |
+| `variants` | — | `{имя: {параметр: значение}}` — изменения относительно base |
+| `base` | `None` | базовая конфигурация; её результат — первая строка `"base"` |
+| `repeats` | `1` | запусков на вариант с seed = seed, seed+1, …; в результате среднее и `<метрика>_std` |
+| `seed_key` | `"seed"` | имя параметра seed в config |
+| `seed` | `0` | первый seed |
+| `strict` | `True` | вариант может менять только параметры из base (ловит опечатки) |
+
+## Подводные камни
+
+1. **Меняйте одну деталь.** Два изменения сразу — неизвестно, что сработало.
+2. **Шум seed больше эффекта.** Разница 0.02 recall при разбросе 0.03 — не эффект. Делайте `repeats ≥ 3` и смотрите `_std`.
+3. **Одни и те же данные и split** для всех вариантов — иначе сравниваете разбиения, а не детали.
+4. **Опечатка в имени параметра** (`dropuot`) молча даёт «эффект ноль» — поэтому `strict=True`.
+
+## Где используется на карте
+
+<!-- map:start -->
+- [dimensionality_reduction](#/map/ablation)
+- [segmentation](#/map/ablation)
+- [text_to_speech](#/map/ablation)
+- [defect_detection](#/map/ablation) — веса да/нет, adam/sgd, dropout да/нет
+<!-- map:end -->
+
+## Задача
+
+Напишите `ablation(build_fn, variants, *, base=None, repeats=1, seed_key="seed", seed=0, strict=True)` в `solution.py`.
+Аналога нет — тесты проверяют поведение на игрушечной build_fn: base первым, каждый вариант меняет только своё, base не портится, опечатки — ошибка, повторы — среднее и разброс.
