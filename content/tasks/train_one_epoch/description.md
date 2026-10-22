@@ -1,0 +1,53 @@
+# train_one_epoch (эпоха обучения)
+
+**Что делает.** Один проход по всем обучающим данным: для каждого батча — прямой проход, потеря, градиенты, шаг оптимизатора. Возвращает среднюю потерю на объект, чтобы следить, учится ли сеть.
+
+## Как это делают в жизни
+
+В PyTorch готовой функции нет — этот цикл пишут сами (или берут Lightning / ignite):
+
+```python
+def train_one_epoch(model, loader, loss_fn, optimizer, device):
+    model.train()                                   # dropout и batch_norm — в режиме обучения
+    total, n = 0.0, 0
+    for x, y in loader:
+        x, y = x.to(device), y.to(device).float().view(-1, 1)  # на GPU; метки — как выход модели
+        optimizer.zero_grad()                       # сбросить градиенты прошлого батча
+        loss = loss_fn(model(x), y)                 # прямой проход и потеря
+        loss.backward()                             # градиенты
+        optimizer.step()                            # шаг
+        total += loss.item() * len(x)               # .item() — число, без графа
+        n += len(x)
+    return total / n
+
+# Lightning: тот же цикл внутри Trainer
+# trainer = lightning.Trainer(max_epochs=10); trainer.fit(lit_model, train_loader)
+```
+
+## Параметры (наша функция)
+
+| Параметр | Что значит |
+|---|---|
+| `model` | `nn.Module`, выход `(N, 1)` логитов |
+| `loader` | итерируемое из батчей `(x, y, …)` — обычно `DataLoader` |
+| `loss` | `loss(y_pred, y_true)` → скаляр (слот **loss**: `weighted_cross_entropy`, `log_loss`…) |
+| `optimizer` | объект со `step()` и `zero_grad()` (слот **optimizer**: `adam`, `sgd`) |
+| `device` | `"cpu"`, `"cuda"`, `"mps"` — куда переносить батчи (модель переносят заранее: `model.to(device)`) |
+
+## Подводные камни
+
+1. **`loss.item()`, а не `loss`.** Сумма тензоров тянет за собой граф всех батчей — память растёт, пока не кончится.
+2. **Средняя по объектам, а не по батчам.** Последний батч обычно меньше; среднее средних его переоценивает.
+3. **Забытый `zero_grad`** — градиенты копятся, шаг растёт с каждым батчем.
+4. **Форма и тип меток.** `(N,)` long против `(N, 1)` float логитов: BCE требует одинаковую форму и float.
+
+## Где используется на карте
+
+<!-- map:start -->
+- [defect_detection](#/map) — обучение baseline_cnn с weighted_cross_entropy и adam
+<!-- map:end -->
+
+## Задача
+
+Напишите `train_one_epoch(model, loader, loss, optimizer, device="cpu")` в `solution.py`.
+Готового аналога нет, поэтому тесты проверяют поведение: режим train на всех батчах, ровно один zero_grad и step на батч, градиенты не копятся, средняя потеря по объектам при неполном последнем батче, метки приводятся к форме выхода, потеря падает за эпохи.

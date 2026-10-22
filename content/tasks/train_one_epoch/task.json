@@ -1,0 +1,7 @@
+{
+  "title": "train_one_epoch (эпоха обучения)", "kind": "ml", "topic": "ML/Обучение",
+  "tags": ["блок", "torch", "training", "defect_detection"], "main": "solution.py", "timeout": 120,
+  "library": "нет: обычный цикл обучения PyTorch (аналоги — Lightning Trainer.fit, ignite)",
+  "map_notes": {"defect_detection": "обучение baseline_cnn с weighted_cross_entropy и adam"},
+  "forbidden": {"modules": ["lightning", "pytorch_lightning", "ignite", "accelerate"], "names": ["Trainer", "fit"]}
+}

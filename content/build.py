@@ -26,10 +26,10 @@ def meta(task: Path) -> dict:
 
 def map_section(name: str, parsed: dict) -> str:
     b = parsed["bricks"].get(name)
-    if not b:
-        return "- на карте пока нет\n"
     titles = {r["key"]: r["title"] for r in parsed["rows"]}
     notes = meta(TASKS / name).get("map_notes", {})
+    if not b:  # блок не из CSV (conv_block, train_one_epoch…): строки — те, где он нужен по цепочке
+        return "".join(f"- [{titles.get(k, k)}](#/map) — {v}\n" for k, v in notes.items()) or "- на карте пока нет\n"
     return "".join(f"- [{titles[k]}](#/map/{name})" + (f" — {notes[k]}" if k in notes else "") + "\n" for k in b["rows"])
 
 

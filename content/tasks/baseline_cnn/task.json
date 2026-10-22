@@ -1,0 +1,10 @@
+{
+  "title": "baseline_cnn (простая CNN для дефектов)", "kind": "ml", "topic": "ML/Нейросети/Models",
+  "tags": ["модель", "torch", "cnn", "defect_detection"], "main": "solution.py", "timeout": 180,
+  "library": "nn.Sequential(conv_block × 3, nn.Flatten, nn.Dropout, nn.Linear)",
+  "deps": [{"name": "conv_block", "task": "conv_block"}, {"name": "flatten", "task": "flatten"},
+           {"name": "dropout", "task": "dropout"}, {"name": "linear", "task": "linear"}],
+  "map_notes": {"defect_detection": "базовая модель: с ней сравниваются resnet и efficientnet"},
+  "forbidden": {"modules": ["torch.nn.functional", "torchvision"],
+                "names": ["Conv2d", "BatchNorm2d", "ReLU", "MaxPool2d", "Linear", "Flatten", "Dropout", "Sequential", "functional"]}
+}

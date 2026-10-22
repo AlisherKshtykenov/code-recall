@@ -344,7 +344,7 @@ tr[draggable="true"] { cursor: grab; }
 
 /* ---------- граф «Состав» ---------- */
 .graph { position: relative; display: flex; flex-direction: column; gap: 34px; padding: 10px 0; overflow-x: auto; }
-.glevel { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; position: relative; z-index: 1; }
+.glevel { display: flex; gap: 14px; justify-content: safe center; flex-wrap: nowrap; position: relative; z-index: 1; min-width: max-content; margin: 0 auto; }
 .gnode { display: flex; flex-direction: column; gap: 2px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); min-width: 150px; color: var(--text); text-decoration: none; }
 .gnode:hover { border-color: var(--accent); }
 .gnode.me { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(255, 161, 22, .18); }
