@@ -6,7 +6,7 @@ from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from . import bricks, files_api, review, runner, taskfs
@@ -179,9 +179,22 @@ def unified(a: str, b: str, name: str) -> str:
     return "".join(difflib.unified_diff(a.splitlines(True), b.splitlines(True), f"было/{name}", f"стало/{name}", n=2))
 
 
+MAX_UPLOAD_FILES = 50_000  # папки с датасетами: стандартный предел Starlette (1000 полей) слишком мал
+
+
+async def upload_form(request: Request):
+    """files + paths из multipart-формы с увеличенными пределами числа файлов и полей."""
+    form = await request.form(max_files=MAX_UPLOAD_FILES, max_fields=MAX_UPLOAD_FILES)
+    files, paths = form.getlist("files"), [str(p) for p in form.getlist("paths")]
+    if not files:
+        raise HTTPException(400, "нет файлов")
+    return files, paths
+
+
 @router.post("/tasks/upload/preview")
-async def upload_preview(files: list[UploadFile], paths: list[str] = Form(...), db=Depends(get_db)):
+async def upload_preview(request: Request, db=Depends(get_db)):
     """Ничего не сохраняет: что станет новой задачей, у какой появится новая версия и что поменяется."""
+    files, paths = await upload_form(request)
     res = []
     for folder, g in (await read_upload(files, paths)).items():
         name = taskfs.slug(folder)
@@ -211,8 +224,9 @@ async def upload_preview(files: list[UploadFile], paths: list[str] = Form(...), 
 
 
 @router.post("/tasks/upload")
-async def upload(files: list[UploadFile], paths: list[str] = Form(...), db=Depends(get_db)):
+async def upload(request: Request, db=Depends(get_db)):
     """Сохранить: новая задача или новая версия существующей. Файлы из data/ кладутся в data/ задачи."""
+    files, paths = await upload_form(request)
     results = []
     batch = await read_upload(files, paths)
     for folder in dep_order(batch):
