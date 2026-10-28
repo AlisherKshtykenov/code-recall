@@ -1,14 +1,14 @@
 <!doctype html>
-<html lang="ru" data-theme="dark">
+<html lang="ru" class="app" data-theme="dark">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>CODE RECALL</title>
-  <script>try { document.documentElement.dataset.theme = localStorage.getItem("theme") || "dark"; } catch (e) {}</script>
+  <script>try { var t = localStorage.getItem("theme") || "dark"; document.documentElement.dataset.theme = t === "system" ? (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light") : t; } catch (e) {}</script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;650;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.11/katex.min.css">
-  <link rel="stylesheet" href="/style.css?v=47">
+  <link rel="stylesheet" href="/style.css?v=48">
 </head>
 <body>
   <header class="topbar">
@@ -29,11 +29,11 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.11/katex.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.52.0/min/vs/loader.js"></script>
-  <script src="/common.js?v=47"></script>
-  <script src="/ide.js?v=47"></script>
-  <script src="/bricks.js?v=47"></script>
-  <script src="/map.js?v=47"></script>
-  <script src="/builder.js?v=47"></script>
-  <script src="/app.js?v=47"></script>
+  <script src="/common.js?v=48"></script>
+  <script src="/ide.js?v=48"></script>
+  <script src="/bricks.js?v=48"></script>
+  <script src="/map.js?v=48"></script>
+  <script src="/builder.js?v=48"></script>
+  <script src="/app.js?v=48"></script>
 </body>
 </html>

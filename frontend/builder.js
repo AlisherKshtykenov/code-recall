@@ -4,8 +4,6 @@
 
 const DRAWFLOW_JS = "https://cdn.jsdelivr.net/npm/drawflow@0.0.60/dist/drawflow.min.js";
 const DRAWFLOW_CSS = "https://cdn.jsdelivr.net/npm/drawflow@0.0.60/dist/drawflow.min.css";
-const CAT_COLOR = { metrics: "#3b82f6", preprocessing: "#14b8a6", layers: "#a855f7", activations: "#ec4899", losses: "#f97316",
-                    optimizers: "#eab308", models: "#22c55e", comparison: "#06b6d4" };
 const LEVEL_NAME = { brick: "кирпичик", block: "блок", wall: "стена" };
 let drawflowReady = null;
 
@@ -47,7 +45,7 @@ function cardHtml(d, card) {
   }
   const c = card || {};
   const collapsed = arr(d.children).length ? `<div class="bf-collapsed" title="двойной клик — раскрыть">▸ внутри: ${d.children.length}</div>` : "";
-  return `<div class="bf-body" style="--cat:${CAT_COLOR[c.category] || "var(--line)"}"><div class="bf-kind">${esc(LEVEL_NAME[c.level] || "кирпичик")}${c.implements ? ` · слот ${esc(c.implements)}` : ""}</div>
+  return `<div class="bf-body ${catClass(c.category)}"><div class="bf-kind">${esc(LEVEL_NAME[c.level] || "кирпичик")}${c.implements ? ` · слот ${esc(c.implements)}` : ""}</div>
     <b class="bf-title">${esc(c.title || d.title)}</b>
     <div class="bf-meta">${modeHalves(c.statuses)} <span class="small">${testsBadge(c.tests, c.modes)}</span></div>${collapsed}</div>`;
 }
@@ -81,10 +79,10 @@ function makeCanvas(el, { readonly = false } = {}) {
     const minX = Math.min(...xs) - 50, minY = Math.min(...ys) - 50, maxX = Math.max(...xs) + 250, maxY = Math.max(...ys) + 150;
     const k = Math.min(mini.width / (maxX - minX), mini.height / (maxY - minY));
     mini._view = { minX, minY, k };
-    ctx.fillStyle = getComputedStyle(document.body).getPropertyValue("--muted") || "#888";
+    ctx.fillStyle = tok("--line-2");
     nodes.forEach(n => ctx.fillRect((n.pos_x - minX) * k, (n.pos_y - minY) * k, 180 * k, 70 * k));
     const box = $(".bf-flow", el).getBoundingClientRect();  // видимая область
-    ctx.strokeStyle = "#FFA116";
+    ctx.strokeStyle = tok("--accent");
     ctx.strokeRect((-editor.canvas_x / editor.zoom - minX) * k, (-editor.canvas_y / editor.zoom - minY) * k, box.width / editor.zoom * k, box.height / editor.zoom * k);
   };
   mini.onclick = e => {

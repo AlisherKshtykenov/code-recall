@@ -354,6 +354,7 @@ def get_task(tid: int, db=Depends(get_db)):
     return {**task_short(t), "notes": t.notes, "python": t.python, "python_resolved": py, "timeout": t.timeout,
             "main_file": t.main_file, "description": files.get("description.md", ""),
             "reference": taskfs.reference_names(files), "roles": json.loads(v.roles or "{}"),
+            "reference_paths": sorted(k for k in files if k.startswith("reference/") and k.endswith(".py")),
             "test_files": sorted(taskfs.all_test_files(files)), "default_mode": taskfs.default_mode(files), "versions": [version_out(x) for x in t.versions],
             "data_link": taskfs.data_link(t.name), "path": str(taskfs.task_dir(t.name)),
             "dirty": taskfs.files_hash(taskfs.snapshot(t.name), json.loads(v.roles or "{}")) != v.content_hash}

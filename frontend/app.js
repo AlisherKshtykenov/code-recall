@@ -2,7 +2,7 @@
 const view = $("#view");
 let current = null;  // открытая IDE — закрываем при уходе со страницы
 
-$("#theme").onclick = () => setTheme(theme() === "dark" ? "light" : "dark");
+$("#theme").onclick = () => setTheme({ dark: "light", light: "system", system: "dark" }[themePref()] || "dark");  // тёмная → светлая → как в системе
 
 const routes = { today: viewToday, tasks: viewTasks, task: viewTask, attempt: viewAttempt, edit: viewEdit,
                  journal: viewJournal, review: viewReview, stats: viewStats, settings: viewSettings, assemble: viewAssemble, map: viewMap, builder: viewBuilder };
@@ -217,7 +217,7 @@ async function viewTask(id, tab = "about") {
       ${t.modes.length ? `<div class="seg" id="mode-seg" style="margin:0" title="Библиотека — как и где применять; С нуля — как работает. Засчитываются оба.">
         ${MODES.map(m => `<button data-mode="${m}" ${t.modes.includes(m) ? "" : 'disabled title="у задачи нет этого режима"'}>${MODE_TITLE[m]}</button>`).join("")}</div>
       <button class="primary" id="go">${t.deps.length ? "Собрать и начать" : "Начать"}</button>` : '<span class="badge">концепт — только README</span>'}</div>
-    ${t.broken ? `<div class="card" style="border-left:3px solid var(--err)"><b class="err">Сломано зависимостью</b> — ${esc(t.broken)}
+    ${t.broken ? `<div class="card" style="border-left:3px solid var(--fail)"><b class="err">Сломано зависимостью</b> — ${esc(t.broken)}
       <span class="muted small">Тесты задачи упали на эталоне после смены эталона кирпичика; такие тесты не влияют на оценку.</span>
       <button class="small" id="recheck">Перепроверить</button></div>` : ""}
     <div class="tabs">${[["about", "Описание"], ["compose", "Состав"], ["attempts", "Попытки"], ["versions", "Версии"], ["settings", "Настройки"]]
@@ -827,19 +827,21 @@ async function viewEdit(id) {
 **Папка задачи**
 
 - \`description.md\` — описание (markdown, формулы \`$…$\`)
-- \`reference/\` — эталон: файлы, которые вы учите. Запускаются здесь кнопкой «Запустить» (рабочая папка — корень задачи).
+- \`reference/library/\` и \`reference/scratch/\` — эталоны режимов «Библиотека» и «С нуля» (та же сигнатура). Запускаются здесь кнопкой «Запустить».
 - \`starter/\` — заготовки: \`starter/model.py\` подставится в попытку вместо пустого \`model.py\`
-- \`tests/test_*.py\` — pytest; импортируют код по имени файла: \`from model import Net\`
+- \`tests/test_*.py\` — общие тесты обоих режимов (pytest, \`from model import Net\`); \`tests/library/\`, \`tests/scratch/\` — проверки режима
 - \`data/\` — датасеты (или подключённая папка), \`results/\` — что сохраняет код
 - \`task.json\` — название, тип, тема, лимит времени, главный файл, роли
 
 Фикстуры в тестах: \`device\`, \`seed\`, \`data_dir\`.
 
 «Проверить» гоняет тесты на эталоне из папки — так видно, что тесты верные. «Сохранить версию» делает снимок папки: новые попытки пойдут по нему.`)}</div>`; } };
+  const refPaths = arr(t.reference_paths).length ? t.reference_paths : t.reference.map(f => `reference/${f}`);  // reference/<режим>/x.py
   current = await openIDE(view, {
-    title: `${t.title} · редактор задачи`, base, back: `#/task/${id}`, roles: Object.fromEntries(Object.entries(t.roles).map(([f, r]) => [`reference/${f}`, r])),
-    open: [t.reference[0] ? `reference/${t.main_file && t.reference.includes(t.main_file) ? t.main_file : t.reference[0]}` : "description.md"],
-    preload: t.reference.map(f => `reference/${f}`), pyFiles: t.reference.map(f => `reference/${f}`), expand: ["reference", "tests"],
+    title: `${t.title} · редактор задачи`, base, back: `#/task/${id}`,
+    roles: Object.fromEntries(refPaths.map(p => [p, t.roles[p.split("/").pop()]]).filter(([, r]) => r)),
+    open: [refPaths.find(p => p.endsWith(`/${t.main_file}`) && p.includes(`/${t.default_mode}/`)) || refPaths[0] || "description.md"],
+    preload: refPaths, pyFiles: refPaths, expand: ["reference", `reference/${t.default_mode}`, "tests"],
     dataLink: t.data_link, leftTabs: [descTab, helpTab], leftTab: "desc",
     runnable: p => p.startsWith("reference/") && p.endsWith(".py"),
     run: path => api(`${base}/run`, { method: "POST", json: { path } }).then(r => r.job),

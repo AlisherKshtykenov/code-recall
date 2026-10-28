@@ -37,13 +37,28 @@ const fmtSize = b => b == null ? "" : b < 1024 ? `${b} Б` : b < 1048576 ? `${(b
 const KIND = { algo: "Алгоритм", ml: "ML" };
 const GRADE_CLS = { "забыл": "err", "трудно": "warn", "нормально": "ok", "легко": "ok" };
 
-// ---------------- тема ----------------
+// ---------------- тема: тёмная / светлая / как в системе ----------------
+const darkMQ = window.matchMedia("(prefers-color-scheme: dark)");
+function themePref() { try { return localStorage.getItem("theme") || "dark"; } catch { return "dark"; } }
 function theme() { return document.documentElement.dataset.theme || "dark"; }
-function setTheme(t) {
-  document.documentElement.dataset.theme = t;
-  try { localStorage.setItem("theme", t); } catch { /* приватный режим */ }
-  if (window.monaco) monaco.editor.setTheme(t === "light" ? "recall-light" : "recall-dark");
+function applyTheme() {
+  const pref = themePref();
+  document.documentElement.dataset.theme = pref === "system" ? (darkMQ.matches ? "dark" : "light") : pref;
+  if (window.monaco) defineMonacoThemes();
 }
+function setTheme(t) {
+  try { localStorage.setItem("theme", t); } catch { /* приватный режим */ }
+  applyTheme();
+}
+darkMQ.addEventListener?.("change", () => { if (themePref() === "system") applyTheme(); });
+// цвет из токенов текущей темы (для Monaco, canvas и SVG)
+const tok = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+// категория кирпичика -> класс .c-*, он задаёт --c
+const CAT_CLASS = { preprocessing: "c-pre", layers: "c-lay", activations: "c-act", losses: "c-los", optimizers: "c-opt", metrics: "c-met",
+                    comparison: "c-cmp", models: "c-mod" };
+const CAT_TITLE = { preprocessing: "Preprocessing", layers: "Layers", activations: "Activations", losses: "Losses", optimizers: "Optimizers",
+                    metrics: "Metrics", comparison: "Comparison", models: "Models" };
+const catClass = c => CAT_CLASS[String(c || "").toLowerCase()] || "";
 
 // ---------------- markdown + KaTeX ----------------
 // Формулы вынимаем ДО markdown (иначе _ и * внутри $…$ станут курсивом); код не трогаем.
@@ -63,7 +78,7 @@ function md(text) {
 }
 
 // ---------------- ANSI -> HTML ----------------
-const ANSI = ["#555", "#EF4743", "#2CBB5D", "#FFC01E", "#5FA8FF", "#C38CFF", "#4FD1C5", "#CCC"];
+const ANSI = ["var(--text-3)", "var(--fail-text)", "var(--ok-text)", "var(--due-text)", "var(--new-text)", "var(--py-keyword)", "var(--py-builtin)", "var(--text)"];
 function ansiHtml(text) {
   let out = "", fg = null, bold = false, open = false;
   const parts = String(text).split(/\x1b\[([0-9;]*)m/);
@@ -92,22 +107,59 @@ function loadMonaco() {
     `self.MonacoEnvironment={baseUrl:"${MONACO}/"};importScripts("${MONACO}/vs/base/worker/workerMain.js");`)}` };
   require.config({ paths: { vs: `${MONACO}/vs` } });
   monacoReady = new Promise(ok => require(["vs/editor/editor.main"], () => {
-    const common = { "editorLineNumber.foreground": "#6E7681", "editorIndentGuide.background1": "#3A3A3A55" };
-    monaco.editor.defineTheme("recall-dark", { base: "vs-dark", inherit: true, rules: [
-      { token: "comment", foreground: "8B949E", fontStyle: "italic" }, { token: "keyword", foreground: "FF9D5C" },
-      { token: "string", foreground: "A5D6A7" }, { token: "number", foreground: "79C0FF" }],
-      colors: { ...common, "editor.background": "#1E1E1E", "editor.lineHighlightBackground": "#2A2A2A",
-        "editorCursor.foreground": "#FFA116", "editor.selectionBackground": "#FFA11633" } });
-    monaco.editor.defineTheme("recall-light", { base: "vs", inherit: true, rules: [
-      { token: "comment", foreground: "6A737D", fontStyle: "italic" }, { token: "keyword", foreground: "C2410C" },
-      { token: "string", foreground: "1A7F37" }, { token: "number", foreground: "0550AE" }],
-      colors: { "editor.background": "#FFFFFF", "editor.lineHighlightBackground": "#F6F8FA",
-        "editorCursor.foreground": "#E08800", "editor.selectionBackground": "#FFA11640", "editorLineNumber.foreground": "#9AA1AA" } });
-    monaco.editor.setTheme(theme() === "light" ? "recall-light" : "recall-dark");
+    // встроенный токенизатор Python грузится лениво и перекрыл бы наш — ставим свой после него
+    monaco.languages.onLanguage("python", () => require(["vs/basic-languages/python/python"], () => setTimeout(registerPythonTokens, 30)));
+    defineMonacoThemes();
     registerPythonCompletion();
     ok(monaco);
   }));
   return monacoReady;
+}
+
+// Темы Monaco — из CSS-токенов текущей темы (стр. 27): поверхности, текст, акцент, подсветка Python
+function defineMonacoThemes() {
+  const h = n => tok(n).replace("#", "").slice(0, 6);
+  const name = theme() === "light" ? "recall-light" : "recall-dark";
+  monaco.editor.defineTheme(name, { base: theme() === "light" ? "vs" : "vs-dark", inherit: true, rules: [
+    { token: "", foreground: h("--text") },
+    { token: "keyword", foreground: h("--py-keyword") }, { token: "function", foreground: h("--py-function") },
+    { token: "string", foreground: h("--py-string") }, { token: "number", foreground: h("--py-number") },
+    { token: "comment", foreground: h("--py-comment"), fontStyle: "italic" },
+    { token: "self", foreground: h("--py-self") }, { token: "builtin", foreground: h("--py-builtin") },
+    { token: "operator", foreground: h("--py-operator") }, { token: "delimiter", foreground: h("--py-operator") },
+    { token: "decorator", foreground: h("--py-function") }],
+    colors: { "editor.background": tok("--editor"), "editor.foreground": tok("--text"), "editorLineNumber.foreground": tok("--text-3"),
+      "editorLineNumber.activeForeground": tok("--text"), "editor.lineHighlightBackground": tok("--panel-2"), "editor.lineHighlightBorder": tok("--panel-2"),
+      "editorCursor.foreground": tok("--accent-text"), "editor.selectionBackground": tok("--accent") + "44", "editorIndentGuide.background1": tok("--line"),
+      "editorWidget.background": tok("--panel-2"), "editorWidget.border": tok("--line-2"), "editorSuggestWidget.background": tok("--panel-2"),
+      "editorSuggestWidget.selectedBackground": tok("--panel-3"), "scrollbarSlider.background": tok("--line-2") + "88",
+      "editorGutter.background": tok("--editor"), "minimap.background": tok("--editor") } });
+  monaco.editor.setTheme(name);
+}
+
+// Python: свой токенизатор — функции, self, встроенные имена и операторы отдельными цветами
+function registerPythonTokens() {
+  const keywords = "False None True and as assert async await break class continue def del elif else except finally for from global if import in is lambda nonlocal not or pass raise return try while with yield match case".split(" ");
+  const builtins = "abs all any bool dict enumerate filter float int isinstance len list map max min object open print range repr reversed round set sorted str sum super tuple type zip Exception ValueError TypeError KeyError IndexError RuntimeError NotImplementedError".split(" ");
+  monaco.languages.setMonarchTokensProvider("python", {
+    keywords, builtins,
+    tokenizer: {
+      root: [
+        [/#.*$/, "comment"],
+        [/@[a-zA-Z_][\w.]*/, "decorator"],
+        [/[rRbBuUfF]{0,2}"""/, "string", "@tdq"], [/[rRbBuUfF]{0,2}'''/, "string", "@tsq"],
+        [/[rRbBuUfF]{0,2}"([^"\\]|\\.)*"/, "string"], [/[rRbBuUfF]{0,2}'([^'\\]|\\.)*'/, "string"],
+        [/\b(self|cls)\b/, "self"],
+        [/[a-zA-Z_]\w*(?=\s*\()/, { cases: { "@keywords": "keyword", "@builtins": "builtin", "@default": "function" } }],
+        [/[a-zA-Z_]\w*/, { cases: { "@keywords": "keyword", "@builtins": "builtin", "@default": "identifier" } }],
+        [/0[xX][0-9a-fA-F]+|\d+(\.\d+)?([eE][-+]?\d+)?j?/, "number"],
+        [/[+\-*/%=<>!&|^~:]+/, "operator"],
+        [/[()[\]{},.;]/, "delimiter"],
+      ],
+      tdq: [[/"""/, "string", "@pop"], [/[^"]+|"/, "string"]],
+      tsq: [[/'''/, "string", "@pop"], [/[^']+|'/, "string"]],
+    },
+  });
 }
 
 // Автодополнение: ключевые слова, встроенные функции и имена из всех файлов задачи
