@@ -123,6 +123,12 @@ async function viewAssemble(id, mode) {
   let opt = normOpt(await api(`/api/tasks/${id}/assembly?mode=${mode}`));
   let asm = Object.fromEntries(opt.nodes.map(n => [n.name, { source: n.source, ...(n.kind === "slot" ? { impl: n.task_name } : {}) }]));
   const lastAsm = opt.last;
+  const [P, topics] = await Promise.all([api("/api/builder/palette"), apiList("/api/topics")]);
+  const cardBy = Object.fromEntries(P.tasks.map(c => [c.id, c]));
+  // источник на сборке (стр. 12, 27): Н — сам · с нуля, Б — сам · библиотекой, Э — эталон, П — моя последняя
+  const SRC = { self_scratch: ["Н", "сам · с нуля", "пишешь, как устроено"], self_library: ["Б", "сам · библиотекой", "пишешь, применяя готовое"],
+                ref: ["Э", "эталон", "подставится, не в оценке"], last: ["П", "моя последняя", "твоя прошлая версия"] };
+  const srcOff = (n, s) => s === "last" ? !n.last : s.startsWith("self_") && !n.modes.includes(s.slice(5));
   async function refresh() {
     opt = normOpt(await api(`/api/tasks/${id}/assembly?mode=${mode}&asm=${encodeURIComponent(JSON.stringify(asm))}`));
     asm = Object.fromEntries(opt.nodes.map(n => [n.name, { source: asm[n.name]?.source || "ref", ...(n.kind === "slot" ? { impl: n.task_name } : {}) }]));
@@ -130,61 +136,75 @@ async function viewAssemble(id, mode) {
   }
   function render() {
     const nodes = opt.nodes;
-    view.innerHTML = `<div class="row" style="margin-bottom:6px"><a href="#/task/${id}" class="muted">← ${esc(t.title)}</a></div>
-      <div class="row" style="margin-bottom:12px"><h1 style="margin:0">Сборка перед стартом</h1>${modeBadge(mode)}<span class="grow"></span>
-        <button class="ghost" data-all="ref">всё эталоном</button><button class="ghost" data-all="self_library">всё сам · библиотекой</button>
-        <button class="ghost" data-all="self_scratch">всё сам · с нуля</button>
-        ${opt.has_last ? '<button class="ghost" id="as-last">как в прошлый раз</button>' : ""}
-        <button class="primary" id="as-go">Начать</button></div>
-      <p class="muted small">Для каждой зависимости: <b>сам · библиотекой</b> — файл <span class="mono">bricks/&lt;имя&gt;.py</span> через готовую функцию; <b>сам · с нуля</b> — своими руками
-        (собственные тесты кирпичика гоняются первыми, повтор засчитывается этому режиму); имя для импорта не меняется;
-        <b>эталон</b> — подключается скрыто, только для импорта; <b>моя последняя</b> — ваш код из попытки, где все его тесты прошли. Выбор запоминается.</p>
-      ${nodes.length ? "" : '<div class="card empty">У этой задачи нет зависимостей — собирать нечего, можно сразу начинать.</div>'}
-      <div class="card" ${nodes.length ? "" : "hidden"}><div class="label">Схема сборки — источник выбирается прямо на карточке</div><div id="as-board"></div></div>
-      <div class="card" ${nodes.length ? "" : "hidden"}><table><thead><tr><th>Импорт</th><th>Кирпичик</th><th>Статус</th><th>Источник</th></tr></thead><tbody>
-      ${nodes.map(n => {
-        const src = asm[n.name]?.source || "ref";
-        return `<tr><td style="padding-left:${10 + n.depth * 18}px" class="mono small">${n.depth ? "└ " : ""}${n.kind === "slot" ? `slots.${esc(n.slot)}` : `bricks.${esc(n.name)}`}</td>
-          <td>${n.kind === "slot" ? `<span class="muted small">слот ${esc(n.slot)} →</span> <select data-impl="${esc(n.name)}">${n.impls.map(i => `<option value="${esc(i.name)}" ${i.name === n.task_name ? "selected" : ""}>${esc(i.title)}</option>`).join("")}</select>`
-            : `<a href="#/task/${n.task_id}">${esc(n.title)}</a>`}</td>
-          <td>${modeHalves(n.statuses)}${n.status === "broken" ? ' <span class="err small">сломано</span>' : ""}</td>
-          <td><div class="seg" style="margin:0">${SOURCES.map(s => {
-              const off = s === "last" ? !n.last : s.startsWith("self_") && !n.modes.includes(s.slice(5));
-              const tip = s === "last" ? (n.last ? n.last.from : "нет версии, где все тесты прошли") : off ? "у кирпичика нет этого режима" : "";
-              return `<button data-src="${esc(n.name)}" data-v="${s}" class="${src === s ? "sel" : ""}" ${off ? "disabled" : ""} ${tip ? `title="${esc(tip)}"` : ""}>${SOURCE_NAME[s]}</button>`;
-            }).join("")}</div></td></tr>`;
-      }).join("")}</tbody></table>
-      <p class="muted small mt">Импорт в коде задачи: ${nodes.filter(n => !n.depth).map(n => `<span class="mono">${n.kind === "slot" ? `from slots.${esc(n.slot)} import ${esc(n.symbol)}` : `from bricks.${esc(n.name)} import …`}</span>`).join(" · ")}</p></div>`;
-    if (nodes.length) renderBoardView($("#as-board"), id, { height: "380px", assemble: opt, sourceHtml: (name, n) => `<select class="bf-src" data-src-sel="${esc(name)}">${SOURCES.map(s => {
-        const off = s === "last" ? !n.last : s.startsWith("self_") && !n.modes.includes(s.slice(5));
-        return `<option value="${s}" ${(asm[name]?.source || "ref") === s ? "selected" : ""} ${off ? "disabled" : ""}>${SOURCE_NAME[s]}</option>`;
-      }).join("")}</select>` }).then(() => $$("[data-src-sel]").forEach(sel => sel.onchange = () => { asm[sel.dataset.srcSel] = { ...asm[sel.dataset.srcSel], source: sel.value }; refresh(); }));
-    $$("[data-src]").forEach(b => b.onclick = () => { asm[b.dataset.src] = { ...asm[b.dataset.src], source: b.dataset.v }; refresh(); });  // режим меняет поддерево
-    $$("[data-impl]").forEach(s => s.onchange = () => { asm[s.dataset.impl] = { ...asm[s.dataset.impl], impl: s.value }; refresh(); });
+    const self = nodes.filter(n => (asm[n.name]?.source || "ref").startsWith("self_"));
+    const due = nodes.filter(n => Object.entries(n.statuses || {}).some(([, s]) => s === "due" || s === "weak"));
+    const tests = [...self, { task_id: t.id, self: true }].map(n => { const c = cardBy[n.task_id]; const m = n.self ? mode : asm[n.name].source.slice(5); return c?.tests?.[m]?.[1]; });
+    const known = tests.every(x => x != null);
+    document.body.classList.add("ide-mode");
+    view.innerHTML = `<div class="as-page">
+      <div class="ide-top">
+        <a href="#/task/${id}" class="icon-btn ide-back" title="назад">←</a>
+        <div class="ide-title"><div class="crumbs">${esc(topicPath(topics, t.topic_id) || "Задачи").replaceAll(" / ", '<span class="sep">/</span>')}<span class="sep">/</span>Сборка перед стартом</div>
+          <div class="ide-name"><span class="title">${esc(t.title)}</span>${levelTag(t.level)}${modeBadge(mode)}<span class="badge plan">только просмотр</span></div></div>
+        <span class="grow"></span>
+        ${nodes.length ? `<span class="faint small">быстро:</span><div class="seg" style="margin:0"><button data-all="ref">всё эталоном</button><button data-all="self">всё сам</button>
+          ${opt.has_last ? '<button id="as-last">как в прошлый раз</button>' : ""}</div>` : ""}
+        <button class="primary" id="as-go">${ICON.play}Начать</button>
+      </div>
+      <div class="as-cols">
+        <div class="as-board" id="as-board">${nodes.length ? "" : emptyState({ icon: "blocks", title: "Собирать нечего", text: "У этой задачи нет зависимостей — можно сразу начинать." })}</div>
+        <aside class="as-side">
+          <div class="label">Источник для каждой карточки</div>
+          ${Object.entries(SRC).map(([k, [, n, d]]) => `<div class="as-leg"><span class="src-pill s-${k}">${n}</span><span class="muted">${d}</span></div>`).join("")}
+          <div class="insp-sep"></div>
+          <div class="label">Пишешь сам</div>
+          <div class="as-self"><div><i class="sq ${catClass(cardBy[t.id]?.category)}"></i><span class="mono">${esc(t.name)}</span><span class="grow"></span>${modeBadge(mode, { short: true })}</div>
+            ${self.map(n => `<div><i class="sq ${catClass(cardBy[n.task_id]?.category)}"></i><span class="mono">${esc(n.kind === "slot" ? `${n.task_name} (${n.slot})` : n.name)}</span><span class="grow"></span>${modeBadge(asm[n.name].source.slice(5), { short: true })}</div>`).join("")}</div>
+          ${known ? `<div class="as-kv"><span class="muted">тестов в оценке</span><b>${tests.reduce((a, b) => a + b, 0)}</b></div>` : ""}
+          ${due.slice(0, 3).map(n => { const m = Object.entries(n.statuses).find(([, s]) => s === "due" || s === "weak")[0];
+            return `<div class="as-hint"><b><i class="t-dot" style="background:var(--due);display:inline-block;margin:0 6px 1px 0"></i>${esc(n.name)} · ${MODE_NAME[m]} — пора повторить</b>
+              <p class="muted">Выбери на его карточке «сам · ${MODE_NAME[m]}» — повтор засчитается в этой задаче.</p></div>`; }).join("")}
+          <span class="grow"></span>
+          <button class="primary wide" id="as-go2">Начать</button>
+        </aside>
+      </div></div>`;
+    current = { dispose: () => document.body.classList.remove("ide-mode") };
+    if (nodes.length) renderBoardView($("#as-board"), id, { height: "100%", palette: P, assemble: opt, hint: "только просмотр · выбери источник на карточках",
+      onImpl: (key, impl) => { const n = nodes.find(x => `s:${x.slot}` === key); if (n) { asm[n.name] = { ...asm[n.name], impl }; refresh(); } },
+      sourceHtml: (name, n) => { const s = asm[name]?.source || "ref";
+        return `<span class="src-wrap"><button class="src-pill s-${s}" data-src-open="${esc(name)}">${SRC[s][1]} ▾</button>
+          <span class="src-menu" data-src-menu="${esc(name)}" hidden>${Object.entries(SRC).map(([k, [l, n2]]) => `<button data-src-set="${esc(name)}" data-v="${k}" ${srcOff(n, k) ? "disabled" : ""}
+            title="${srcOff(n, k) ? (k === "last" ? "нет версии, где все тесты прошли" : "у кирпичика нет этого режима") : ""}"><span class="src-l s-${k}">${l}</span>${n2}<span class="faint small">${k === "ref" ? "не в оценке" : k === "last" && n.last ? esc(n.last.from || "") : ""}</span></button>`).join("")}</span></span>`; } })
+      .then(() => {
+        $$("[data-src-open]").forEach(b => { b.onmousedown = e => e.stopPropagation(); b.onclick = e => { e.stopPropagation(); const m = $(`[data-src-menu="${CSS.escape(b.dataset.srcOpen)}"]`); const was = m.hidden; $$("[data-src-menu]").forEach(x => { x.hidden = true; }); m.hidden = !was; }; });
+        $$("[data-src-set]").forEach(b => { b.onmousedown = e => e.stopPropagation(); b.onclick = () => { asm[b.dataset.srcSet] = { ...asm[b.dataset.srcSet], source: b.dataset.v }; refresh(); }; });
+        document.addEventListener("click", () => $$("[data-src-menu]").forEach(x => { x.hidden = true; }), { once: true });
+      });
     $$("[data-all]").forEach(b => b.onclick = () => {
-      const want = b.dataset.all;
-      opt.nodes.forEach(n => { asm[n.name] = { ...asm[n.name], source: want.startsWith("self_") && !n.modes.includes(want.slice(5)) ? `self_${n.modes[0] || "scratch"}` : want }; });
+      const want = b.dataset.all;  // «всё сам»: в режиме задачи, если у кирпичика он есть
+      opt.nodes.forEach(n => { asm[n.name] = { ...asm[n.name], source: want === "ref" ? "ref" : n.modes.includes(mode) ? `self_${mode}` : `self_${n.modes[0] || "scratch"}` }; });
       refresh();
     });
     const last = $("#as-last");
     if (last) last.onclick = () => { asm = JSON.parse(JSON.stringify(lastAsm)); refresh(); };
-    $("#as-go").onclick = async () => {
+    const go = async () => {
       try { const a = await api(`/api/tasks/${id}/attempts`, { method: "POST", json: { assembly: asm, mode } }); location.hash = `#/attempt/${a.id}`; }
       catch (e) { toast(e.message, true); }
     };
+    $("#as-go").onclick = go; $("#as-go2").onclick = go;
   }
   render();
 }
 
 // ---------- граф «Состав» — холст конструктора в режиме «только просмотр» ----------
 async function renderComposition(box, id) {
-  const g = await api(`/api/tasks/${id}/graph`);
-  box.innerHTML = `<div class="card"><div class="row"><p class="muted small grow" style="margin:0">Слева — из чего собрана задача (эталонная сборка), правее — где она используется.
-      Стрелка ведёт от используемого к использующему. Двойной клик по карточке — перейти к задаче; колесо — масштаб, перетаскивание фона — сдвиг.</p>
-      <a class="btn" href="#/builder/${id}">Открыть в конструкторе</a></div>
-    ${g.error ? `<p class="err">${esc(g.error)}</p>` : ""}${!arr(g.up).length && !arr(g.down).length ? '<p class="muted">Задача ни от чего не зависит и нигде не используется.</p>' : ""}
-    <div id="compose-board" class="mt"></div></div>`;
-  await renderBoardView($("#compose-board", box), id);
+  box.innerHTML = '<div class="card comp-card"><div class="comp-head" id="comp-h"></div><div id="compose-board"></div></div>';
+  const v = await renderBoardView($("#compose-board", box), id, { height: "560px", hint: "только просмотр" });
+  const me = v.me, root = v.rootCard;
+  $("#comp-h", box).innerHTML = `<span class="muted">${root.id === me.id ? (arr(me.deps).length ? `Из чего собрана <span class="mono">${esc(me.name)}</span>` : `<span class="mono">${esc(me.name)}</span> ни от чего не зависит и пока нигде не используется`)
+    : me.implements ? `<span class="mono">${esc(me.name)}</span> стоит в слоте <span class="mono">${esc(me.implements)}</span> ${root.level === "wall" ? "стены" : "задачи"} «${esc(root.title)}»`
+    : `<span class="mono">${esc(me.name)}</span> входит в ${root.level === "wall" ? "стену" : "задачу"} «${esc(root.title)}»`}</span>
+    <span class="grow"></span><span class="badge plan">только просмотр</span><a class="btn link" href="#/builder/${root.id}">Открыть в конструкторе</a>`;
 }
 
 // ---------- мастер «Новая задача» ----------

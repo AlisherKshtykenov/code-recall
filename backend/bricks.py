@@ -54,7 +54,9 @@ def level_of(files: dict) -> str:
     meta = taskfs.read_meta(files)
     if "стена" in (meta.get("tags") or []) or meta.get("level") == "wall":
         return "wall"
-    # блок — если зависимости есть в каждом режиме; зависимость одного режима (recall «с нуля» -> confusion_matrix) — нет
+    if "блок" in (meta.get("tags") or []) or meta.get("level") == "block":
+        return "block"
+    # иначе блок — если зависимости есть в каждом режиме; зависимость одного режима (recall «с нуля» -> confusion_matrix) — нет
     modes = taskfs.modes_of(files) or [None]
     return "block" if all(deps_of(files, m) for m in modes) else "brick"
 

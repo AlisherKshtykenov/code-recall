@@ -50,7 +50,7 @@ def task_card(db, t: Task) -> dict:
     from .tasks import mode_statuses
     return {"id": t.id, "name": t.name, "title": t.title, "topic_id": t.topic_id, "tags": taskfs.json_list(t.tags),
             "modes": taskfs.modes_of(files), "statuses": mode_statuses(t, files), "implements": bricks.implements_of(files),
-            "deps": bricks.deps_of(files), "level": level_of(files), "category": category_of(db, t),
+            "deps": bricks.deps_of(files), "level": level_of(files), "category": category_of(db, t), "main": taskfs.read_meta(files).get("main") or "",
             "tests": {**(ref_tests(t.current) if t.current else {}), **json.loads(get_setting(db, f"reftests:{t.id}", "{}") or "{}")},
             "broken": t.broken or ""}
 
