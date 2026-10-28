@@ -93,16 +93,18 @@ async def map_preview(file: UploadFile, db=Depends(get_db)):
             "bricks": len(parsed["bricks"]), "bricks_new": sorted(set(parsed["bricks"]) - have_bricks)}
 
 
-def brick_status(db, t: Task | None, kind: str) -> str:
-    """planned — задачи нет; concept — только README; new / learned / due / weak — по повторениям."""
-    if t is None:
-        return "planned"
-    if kind == "concept":
-        return "concept"
+def mode_brick_status(db, t: Task, mode: str) -> str:
+    """Статус одного режима: none — у задачи нет такого режима; new / learned / due / weak — по повторениям режима."""
+    from .review import schedules
+    files = json.loads(t.current.files) if t.current else {}
+    if mode not in taskfs.modes_of(files):
+        return "none"
     if t.broken:
         return "weak"
-    last_ev = db.query(BrickEvent).filter_by(task_id=t.id).order_by(BrickEvent.at.desc()).first()
-    done = sorted((a for a in t.attempts if a.status in ("submitted", "abandoned") and a.grade is not None), key=lambda a: a.finished_at)
+    last_ev = db.query(BrickEvent).filter(BrickEvent.task_id == t.id).order_by(BrickEvent.at.desc()).all()
+    last_ev = next((e for e in last_ev if (e.mode or "scratch") == mode), None)
+    done = sorted((a for a in t.attempts if a.status in ("submitted", "abandoned") and a.grade is not None
+                   and (a.mode or "scratch") == mode), key=lambda a: a.finished_at)
     last_grade, last_at = (done[-1].grade, done[-1].finished_at) if done else (None, None)
     if last_ev and (last_at is None or last_ev.at > last_at):
         last_grade = last_ev.grade
@@ -110,9 +112,27 @@ def brick_status(db, t: Task | None, kind: str) -> str:
         return "new"
     if last_grade <= 2:
         return "weak"
-    if t.due_at and t.due_at.date() <= datetime.now().date():
+    row = schedules(db, t).get(mode)
+    if row and row.due_at and row.due_at.date() <= datetime.now().date():
         return "due"
     return "learned"
+
+
+AGG_RANK = {"weak": 0, "due": 1, "new": 2, "learned": 3}
+
+
+def brick_status(db, t: Task | None, kind: str) -> tuple[str, dict]:
+    """(сводный статус, {library: …, scratch: …}). planned — задачи нет; concept — только README.
+    Сводный: «выучено» — только если выучены все режимы задачи; иначе самый тревожный из режимов."""
+    if t is None:
+        return "planned", {"library": "planned", "scratch": "planned"}
+    if kind == "concept":
+        return "concept", {"library": "concept", "scratch": "concept"}
+    per = {m: mode_brick_status(db, t, m) for m in taskfs.MODES}
+    real = [v for v in per.values() if v != "none"]
+    if not real:
+        return "concept", per
+    return min(real, key=lambda v: AGG_RANK[v]), per
 
 
 def planned_list(db) -> list[dict]:
@@ -133,7 +153,7 @@ def get_map(db=Depends(get_db)):
                               "rows": taskfs.json_list(b.rows), "reuse": len(taskfs.json_list(b.rows)), "note": b.note,
                               "related": taskfs.json_list(b.related), "topic_id": b.topic_id,
                               "task_id": t.id if t else None, "title": t.title if t else b.name,
-                              "status": brick_status(db, t, b.kind)}
+                              **dict(zip(("status", "statuses"), brick_status(db, t, b.kind)))}
     countable = [b for b in out_bricks.values() if b["kind"] != "concept"]
     cov = {"total": len(countable), "created": sum(b["task_id"] is not None for b in countable),
            "learned": sum(b["status"] == "learned" for b in countable), "concepts": len(out_bricks) - len(countable)}

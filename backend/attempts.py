@@ -47,7 +47,9 @@ def public(a: Attempt, db) -> dict:
         py = f"ошибка: {e}"
     main = t.main_file if t.main_file in roles else next(
         (f for f in ("main.py", "train.py", "solution.py") if f in roles), sorted(roles)[0] if roles else "")
+    mode = a.mode or "scratch"
     return {"id": a.id, "task_id": t.id, "title": t.title, "kind": t.kind, "tag": t.tag, "outcome": outcome(a),
+            "mode": mode, "mode_name": taskfs.MODE_NAME[mode], "modes": taskfs.modes_of(files),
             "last_check": json.loads(a.last_check) if a.last_check else None,
             "last_output": json.loads(a.last_output) if a.last_output else None,
             "finished_at": a.finished_at.isoformat(timespec="seconds") if a.finished_at else None,
@@ -58,7 +60,7 @@ def public(a: Attempt, db) -> dict:
             "checks": a.checks, "ref_opened": bool(a.ref_opened), "timeout": t.timeout, "python": py,
             "score": a.score, "grade": a.grade, "grade_auto": a.grade_auto, "grade_manual": bool(a.grade_manual),
             "grade_name": review.GRADES.get(a.grade), "grades": review.GRADES, "report": rep,
-            "due_at": t.due_at.date().isoformat() if t.due_at else None,
+            "due_at": (lambda r: r.due_at.date().isoformat() if r and r.due_at else None)(review.schedules(db, t).get(mode)),
             "data_link": taskfs.data_link(t.name), "worker": runner.state(f"a{a.id}"),
             "assembly": json.loads(a.assembly or "{}"), "bricks": attempt_bricks(db, a, files)}
 
@@ -67,11 +69,12 @@ def attempt_bricks(db, a: Attempt, files: dict) -> list[dict]:
     """Кирпичики попытки: что пишу сам, что эталоном (скрыт), какая реализация слота."""
     asm = json.loads(a.assembly or "{}")
     try:
-        nodes = bricks.tree(db, a.task, asm, files)
+        nodes = bricks.tree(db, a.task, asm, files, a.mode or "scratch")
     except bricks.DepError as e:
         return [{"error": str(e)}]
     return [{"name": n["name"], "kind": n["kind"], "slot": n.get("slot"), "title": n["title"], "task_id": n["task_id"],
-             "module": n["module"], "source": bricks.source_of(asm, n), "depth": n["depth"]} for n in nodes]
+             "module": n["module"], "source": bricks.source_of(asm, n), "mode": bricks.node_mode(asm, n, db),
+             "depth": n["depth"]} for n in nodes]
 
 
 OUTCOME = {"active": "в процессе", "checking": "проверяется", "abandoned": "брошена",
@@ -98,6 +101,7 @@ def journal_row(a: Attempt) -> dict:
             "date": (a.finished_at or a.started_at).isoformat(timespec="minutes"),
             "started_at": a.started_at.isoformat(timespec="minutes"),
             "finished_at": a.finished_at.isoformat(timespec="minutes") if a.finished_at else None,
+            "mode": a.mode or "scratch", "mode_name": taskfs.MODE_NAME[a.mode or "scratch"],
             "total_ms": a.total_ms, "score": a.score, "grade": review.GRADES.get(a.grade),
             "grade_manual": bool(a.grade_manual), "checks": a.checks, "ref_opened": bool(a.ref_opened),
             "reviews": [review_short(r) for r in a.reviews]}
@@ -107,15 +111,17 @@ def touch(a: Attempt):
     a.touched_at = datetime.now()
 
 
-def clean_assembly(db, t: Task, files: dict, assembly: dict | None) -> dict:
-    """Сборка только из известных зависимостей; «моя последняя версия» без такой версии -> эталон."""
+def clean_assembly(db, t: Task, files: dict, assembly: dict | None, mode: str = "scratch") -> dict:
+    """Сборка только из известных зависимостей режима; «моя последняя версия» без такой версии -> эталон;
+    «пишу сам — библиотекой» у кирпичика без режима «Библиотека» -> «с нуля» (и наоборот)."""
     out = {}
-    for n in bricks.tree(db, t, assembly or {}, files):
-        want = (assembly or {}).get(n["name"]) or {}
-        src = want.get("source", "ref")
+    for n in bricks.tree(db, t, assembly or {}, files, mode):
+        src = bricks.source_of(assembly or {}, n)
         if src == "last" and not bricks.last_good(db, db.get(Task, n["task_id"])):
             src = "ref"
-        out[n["name"]] = {"source": src if src in bricks.SOURCES else "ref"}
+        if src in bricks.SELF_MODE and bricks.SELF_MODE[src] not in n["modes"]:
+            src = f"self_{n['modes'][0]}" if n["modes"] else "ref"
+        out[n["name"]] = {"source": src}
         if n["kind"] == "slot":
             out[n["name"]]["impl"] = n["task_name"]
     return out
@@ -127,7 +133,7 @@ def prepare_dir(db, a: Attempt):
     mine = json.loads(a.files)
     taskfs.write_code(adir(a), mine)
     try:
-        _, lib = bricks.assemble(db, a.task, json.loads(v.files), json.loads(a.assembly or "{}"), mine)
+        _, lib = bricks.assemble(db, a.task, json.loads(v.files), json.loads(a.assembly or "{}"), mine, a.mode or "scratch")
     except bricks.DepError:
         lib = {}
     bricks.write_lib(adir(a), lib)
@@ -135,6 +141,7 @@ def prepare_dir(db, a: Attempt):
 
 class StartIn(BaseModel):
     assembly: dict | None = None  # {имя зависимости: {source, impl}}; None — как в прошлый раз
+    mode: str | None = None  # library | scratch; None — режим по умолчанию (сначала «Библиотека»)
 
 
 @router.post("/tasks/{tid}/attempts")
@@ -142,23 +149,29 @@ def start_attempt(tid: int, body: StartIn | None = None, db=Depends(get_db)):
     t = db.get(Task, tid)
     if t is None:
         raise HTTPException(404, "задача не найдена")
-    existing = next((a for a in reversed(t.attempts) if a.status == "active"), None)
-    if existing:
-        return public(existing, db)  # незаконченная попытка — продолжаем её
     v = t.current
     files = json.loads(v.files)
-    start = taskfs.attempt_start_files(files, json.loads(v.roles or "{}"))
+    modes = taskfs.modes_of(files)
+    if not modes:
+        raise HTTPException(400, "у задачи нет эталона ни в одном режиме (это концепт — только README)")
+    mode = body.mode if body and body.mode else taskfs.default_mode(files)
+    if mode not in modes:
+        raise HTTPException(400, f"у задачи нет режима «{taskfs.MODE_NAME.get(mode, mode)}»; есть: {', '.join(taskfs.MODE_NAME[m] for m in modes)}")
+    existing = next((a for a in reversed(t.attempts) if a.status == "active" and (a.mode or "scratch") == mode), None)
+    if existing:
+        return public(existing, db)  # незаконченная попытка этого режима — продолжаем её
+    start = taskfs.attempt_start_files(files, json.loads(v.roles or "{}"), mode)
     want = body.assembly if body and body.assembly is not None else json.loads(t.last_assembly or "{}")
     try:
-        assembly = clean_assembly(db, t, files, want)
-        nodes = bricks.tree(db, t, assembly, files)
+        assembly = clean_assembly(db, t, files, want, mode)
+        nodes = bricks.tree(db, t, assembly, files, mode)
     except bricks.DepError as e:
         raise HTTPException(400, str(e))
-    for n in nodes:  # кирпичики «пишу сам» — файлы bricks/<имя>.py (заготовка кирпичика или пусто)
-        if assembly[n["name"]]["source"] == "self":
-            start[n["module"]] = bricks.brick_starter(db, n)
+    for n in nodes:  # кирпичики «пишу сам» — файлы bricks/<имя>.py (заготовка своего режима или пусто)
+        if bricks.is_self(assembly, n):
+            start[n["module"]] = bricks.brick_starter(db, n, bricks.node_mode(assembly, n))
     a = Attempt(task_id=t.id, version_id=v.id, files=json.dumps(start, ensure_ascii=False),
-                assembly=json.dumps(assembly, ensure_ascii=False))
+                assembly=json.dumps(assembly, ensure_ascii=False), mode=mode)
     if nodes:
         t.last_assembly = a.assembly  # выбор запоминается («как в прошлый раз»)
     db.add(a)
@@ -235,9 +248,11 @@ def reset_file(aid: int, body: ResetIn, db=Depends(get_db)):
     """«Сбросить файл»: вернуть заготовку (или пустой файл; «дан» — как в эталоне)."""
     a = active(db, aid)
     v = db.get(TaskVersion, a.version_id)
-    start = taskfs.attempt_start_files(json.loads(v.files), json.loads(v.roles or "{}"))
-    for n in bricks.tree(db, a.task, json.loads(a.assembly or "{}"), json.loads(v.files)):
-        start.setdefault(n["module"], bricks.brick_starter(db, n))
+    mode = a.mode or "scratch"
+    asm = json.loads(a.assembly or "{}")
+    start = taskfs.attempt_start_files(json.loads(v.files), json.loads(v.roles or "{}"), mode)
+    for n in bricks.tree(db, a.task, asm, json.loads(v.files), mode):
+        start.setdefault(n["module"], bricks.brick_starter(db, n, bricks.node_mode(asm, n)))
     if body.path not in start:
         raise HTTPException(400, "этого файла нет в задаче")
     files = json.loads(a.files)
@@ -408,11 +423,12 @@ def open_reference(aid: int, db=Depends(get_db)):
         db.commit()
     v = db.get(TaskVersion, a.version_id)
     files = json.loads(v.files)
-    try:  # эталон кирпичиков «пишу сам» — тоже (bricks/<имя>.py); скрытые эталоном кирпичики не показываем
-        ref = bricks.reference_code(db, a.task, files, json.loads(a.assembly or "{}"))
+    mode = a.mode or "scratch"
+    try:  # эталон того же режима; кирпичики «пишу сам» — в своих режимах; скрытые эталоном не показываем
+        ref = bricks.reference_code(db, a.task, files, json.loads(a.assembly or "{}"), mode)
     except bricks.DepError:
-        ref = taskfs.reference_files(files)
-    return {"files": ref, "tests": taskfs.test_files(files), "roles": json.loads(v.roles or "{}")}
+        ref = taskfs.reference_files(files, mode)
+    return {"files": ref, "tests": taskfs.test_files(files, mode), "roles": json.loads(v.roles or "{}"), "mode": mode}
 
 
 class GradeIn(BaseModel):
@@ -433,16 +449,18 @@ def set_grade(aid: int, body: GradeIn, db=Depends(get_db)):
 
 # ---------- запуск эталона в редакторе задачи ----------
 
-def dev_args(t: Task) -> dict:
+def dev_args(t: Task, mode: str | None = None) -> dict:
+    """Окружение запуска эталона в редакторе задачи: в корне .dev/ — эталон режима mode."""
     try:
         py = taskfs.resolve_python(t.python)
     except ValueError as e:
         raise HTTPException(400, str(e))
-    d = taskfs.dev_dir(t.name)
+    files = taskfs.snapshot(t.name)
+    mode = mode or taskfs.ref_mode(files)
+    d = taskfs.dev_dir(t.name, files, mode)
     with SessionLocal() as db:  # кирпичики-эталоны и slots/ — в .dev/.lib/
         try:
-            files = taskfs.snapshot(t.name)
-            _, lib = bricks.assemble(db, db.get(Task, t.id), files, {}, taskfs.reference_files(files))
+            _, lib = bricks.assemble(db, db.get(Task, t.id), files, {}, taskfs.reference_files(files, mode), mode)
         except bricks.DepError:
             lib = {}
     bricks.write_lib(d, lib)
@@ -456,7 +474,10 @@ def task_run(tid: int, body: RunIn, db=Depends(get_db)):
     if t is None:
         raise HTTPException(404, "задача не найдена")
     path = body.path[len("reference/"):] if body.path.startswith("reference/") else body.path
-    args = dev_args(t)
+    mode = None
+    if path.split("/")[0] in taskfs.MODES:  # reference/library/x.py -> режим library, файл x.py
+        mode, path = path.split("/", 1)
+    args = dev_args(t, mode)
     if not (taskfs.dev_dir(t.name) / path).is_file():
         raise HTTPException(400, "запускать можно файлы из reference/")
     return {"job": runner.submit(**args, cmd={"op": "run", "path": path}, timeout=t.timeout)}
@@ -477,8 +498,9 @@ def task_stop(tid: int):
 
 
 @router.post("/tasks/{tid}/check")
-def task_check(tid: int, db=Depends(get_db)):
-    """Тесты на эталоне из текущей папки задачи (до сохранения версии) — проверить сами тесты."""
+def task_check(tid: int, mode: str | None = None, db=Depends(get_db)):
+    """Тесты на эталоне из текущей папки задачи (до сохранения версии) — проверить сами тесты.
+    mode — один режим; без него — все режимы задачи по очереди (у тестов поле mode)."""
     t = db.get(Task, tid)
     if t is None:
         raise HTTPException(404, "задача не найдена")
@@ -491,22 +513,35 @@ def task_check(tid: int, db=Depends(get_db)):
     def go():
         import shutil
         files = taskfs.snapshot(name)
-        with SessionLocal() as db:  # эталон + кирпичики-эталоны + контрактные тесты слота
+        modes = [mode] if mode else taskfs.modes_of(files)
+        tests, fatal, per_mode = [], None, {}
+        for m in modes:
+            job.note(f"=== эталон · {taskfs.MODE_NAME.get(m, m)} ===\n", "stdout")
+            with SessionLocal() as db:  # эталон режима + кирпичики-эталоны + контрактные тесты слота
+                try:
+                    code, suite_tests = checking.suite(db, db.get(Task, tid), files, {}, taskfs.reference_files(files, m), m)
+                except bricks.DepError as e:
+                    fatal = f"сборка не удалась: {e}"
+                    break
+            d = taskfs.run_dir(name, code, suite_tests)
             try:
-                code, tests = checking.suite(db, db.get(Task, tid), files, {}, taskfs.reference_files(files))
-            except bricks.DepError as e:
-                job.finish({"status": "ok", "check": {"tests": [], "fatal": f"сборка не удалась: {e}", "passed": 0, "total": 0}})
-                return
-        d = taskfs.run_dir(name, code, tests)
-        try:
-            res = runner.run_pytest(py, d, timeout, job)
-        finally:
-            shutil.rmtree(d, ignore_errors=True)
-        tests = [{**x, "status": x["status"]} for x in res.get("tests", {}).values()]
-        for e in res.get("collection_errors", []):
-            tests.append({"id": e["file"], "name": e["file"], "file": e["file"], "status": "error", "time": 0,
-                          "message": e["message"], "text": e["text"]})
-        job.finish({"status": "ok", "check": {"tests": tests, "fatal": res.get("fatal"),
+                res = runner.run_pytest(py, d, timeout, job)
+            finally:
+                shutil.rmtree(d, ignore_errors=True)
+            got = [{**x, "mode": m} for x in res.get("tests", {}).values()]
+            for e in res.get("collection_errors", []):
+                got.append({"id": e["file"], "name": e["file"], "file": e["file"], "status": "error", "time": 0,
+                            "message": e["message"], "text": e["text"], "mode": m})
+            per_mode[m] = {"passed": sum(x["status"] == "pass" for x in got), "total": len(got), "fatal": res.get("fatal")}
+            fatal = fatal or res.get("fatal")
+            tests += got
+        with SessionLocal() as db:  # для значка тестов эталона на карточках конструктора
+            from .db import get_setting, set_setting
+            seen = json.loads(get_setting(db, f"reftests:{tid}", "{}") or "{}")
+            seen.update({m: [v["passed"], v["total"]] for m, v in per_mode.items()})
+            set_setting(db, f"reftests:{tid}", json.dumps(seen))
+            db.commit()
+        job.finish({"status": "ok", "check": {"tests": tests, "fatal": fatal, "modes": per_mode,
                                                "passed": sum(x["status"] == "pass" for x in tests), "total": len(tests)}})
 
     threading.Thread(target=go, daemon=True).start()

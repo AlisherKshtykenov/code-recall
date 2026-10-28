@@ -1,8 +1,39 @@
 {
-  "title": "learning_curve (кривая обучения)", "kind": "ml", "topic": "ML/Оценка/Comparison",
-  "tags": ["comparison", "sklearn", "defect_detection"], "main": "solution.py", "timeout": 180,
+  "title": "learning_curve (кривая обучения)",
+  "kind": "ml",
+  "topic": "ML/Оценка/Comparison",
+  "tags": [
+    "comparison",
+    "sklearn",
+    "defect_detection"
+  ],
+  "main": "solution.py",
+  "timeout": 180,
   "library": "sklearn.model_selection.learning_curve",
-  "map_notes": {"defect_detection": "поможет ли собрать больше фото брака: кривая test ещё растёт?"},
-  "forbidden": {"modules": ["sklearn"], "names": ["learning_curve", "LearningCurveDisplay", "cross_validate", "cross_val_score",
-                                                  "StratifiedKFold", "KFold", "check_cv", "clone"]}
+  "map_notes": {
+    "defect_detection": "поможет ли собрать больше фото брака: кривая test ещё растёт?"
+  },
+  "forbidden_modules": [
+    "sklearn"
+  ],
+  "forbidden_names": [
+    "learning_curve",
+    "LearningCurveDisplay",
+    "cross_validate",
+    "cross_val_score",
+    "StratifiedKFold",
+    "KFold",
+    "check_cv",
+    "clone"
+  ],
+  "library_function": "sklearn.model_selection.learning_curve",
+  "required_names": [
+    "learning_curve"
+  ],
+  "required_kwargs": {
+    "learning_curve": [
+      "train_sizes",
+      "cv"
+    ]
+  }
 }

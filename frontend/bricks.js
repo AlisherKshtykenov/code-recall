@@ -1,7 +1,8 @@
 // Кирпичики: дерево тем в библиотеке, экран сборки, граф «Состав», мастер «Новая задача»,
 // «Вынести в кирпичик» / «Создать слот», сборка в попытке.
 
-const SOURCE_NAME = { self: "пишу сам", ref: "эталон", last: "моя последняя" };
+const SOURCE_NAME = { self_library: "сам · библиотекой", self_scratch: "сам · с нуля", self: "сам · с нуля", ref: "эталон", last: "моя последняя" };
+const SOURCES = ["self_library", "self_scratch", "ref", "last"];
 const TYPE_BADGE = { composite: ["", "составная"], slot: ["", "кирпичик"], plain: null };
 const NODE_STATUS = { solved: ["ok", "решено"], due: ["warn", "пора повторить"], new: ["muted", "новая"],
                       broken: ["err", "сломано зависимостью"], failed: ["err", "упал в задаче"] };
@@ -115,82 +116,75 @@ function renderTopicTree(box, topics, state, onChange) {
 }
 
 // ---------- экран сборки ----------
-async function viewAssemble(id) {
+async function viewAssemble(id, mode) {
   const t = normTask(await api(`/api/tasks/${id}`));
-  const normOpt = o => ({ ...o, nodes: arr(o?.nodes).map(n => ({ ...n, impls: arr(n.impls) })), last: o?.last || {} });
-  let opt = normOpt(await api(`/api/tasks/${id}/assembly`));
+  mode = t.modes.includes(mode) ? mode : t.default_mode;  // режим самой составной задачи
+  const normOpt = o => ({ ...o, nodes: arr(o?.nodes).map(n => ({ ...n, impls: arr(n.impls), modes: arr(n.modes) })), last: o?.last || {} });
+  let opt = normOpt(await api(`/api/tasks/${id}/assembly?mode=${mode}`));
   let asm = Object.fromEntries(opt.nodes.map(n => [n.name, { source: n.source, ...(n.kind === "slot" ? { impl: n.task_name } : {}) }]));
   const lastAsm = opt.last;
   async function refresh() {
-    opt = normOpt(await api(`/api/tasks/${id}/assembly?asm=${encodeURIComponent(JSON.stringify(asm))}`));
+    opt = normOpt(await api(`/api/tasks/${id}/assembly?mode=${mode}&asm=${encodeURIComponent(JSON.stringify(asm))}`));
     asm = Object.fromEntries(opt.nodes.map(n => [n.name, { source: asm[n.name]?.source || "ref", ...(n.kind === "slot" ? { impl: n.task_name } : {}) }]));
     render();
   }
   function render() {
     const nodes = opt.nodes;
     view.innerHTML = `<div class="row" style="margin-bottom:6px"><a href="#/task/${id}" class="muted">← ${esc(t.title)}</a></div>
-      <div class="row" style="margin-bottom:12px"><h1 style="margin:0">Сборка перед стартом</h1><span class="grow"></span>
-        <button class="ghost" data-all="ref">всё эталоном</button><button class="ghost" data-all="self">всё сам</button>
+      <div class="row" style="margin-bottom:12px"><h1 style="margin:0">Сборка перед стартом</h1><span class="badge mode-${mode}">${MODE_NAME[mode]}</span><span class="grow"></span>
+        <button class="ghost" data-all="ref">всё эталоном</button><button class="ghost" data-all="self_library">всё сам · библиотекой</button>
+        <button class="ghost" data-all="self_scratch">всё сам · с нуля</button>
         ${opt.has_last ? '<button class="ghost" id="as-last">как в прошлый раз</button>' : ""}
         <button class="primary" id="as-go">Начать</button></div>
-      <p class="muted small">Для каждой зависимости: <b>пишу сам</b> — файл <span class="mono">bricks/&lt;имя&gt;.py</span> в попытке (его собственные тесты гоняются первыми);
+      <p class="muted small">Для каждой зависимости: <b>сам · библиотекой</b> — файл <span class="mono">bricks/&lt;имя&gt;.py</span> через готовую функцию; <b>сам · с нуля</b> — своими руками
+        (собственные тесты кирпичика гоняются первыми, повтор засчитывается этому режиму); имя для импорта не меняется;
         <b>эталон</b> — подключается скрыто, только для импорта; <b>моя последняя</b> — ваш код из попытки, где все его тесты прошли. Выбор запоминается.</p>
       ${nodes.length ? "" : '<div class="card empty">У этой задачи нет зависимостей — собирать нечего, можно сразу начинать.</div>'}
+      <div class="card" ${nodes.length ? "" : "hidden"}><div class="label">Схема сборки — источник выбирается прямо на карточке</div><div id="as-board"></div></div>
       <div class="card" ${nodes.length ? "" : "hidden"}><table><thead><tr><th>Импорт</th><th>Кирпичик</th><th>Статус</th><th>Источник</th></tr></thead><tbody>
       ${nodes.map(n => {
-        const st = NODE_STATUS[n.status] || NODE_STATUS.new, src = asm[n.name]?.source || "ref";
+        const src = asm[n.name]?.source || "ref";
         return `<tr><td style="padding-left:${10 + n.depth * 18}px" class="mono small">${n.depth ? "└ " : ""}${n.kind === "slot" ? `slots.${esc(n.slot)}` : `bricks.${esc(n.name)}`}</td>
           <td>${n.kind === "slot" ? `<span class="muted small">слот ${esc(n.slot)} →</span> <select data-impl="${esc(n.name)}">${n.impls.map(i => `<option value="${esc(i.name)}" ${i.name === n.task_name ? "selected" : ""}>${esc(i.title)}</option>`).join("")}</select>`
             : `<a href="#/task/${n.task_id}">${esc(n.title)}</a>`}</td>
-          <td><span class="${st[0]} small">${st[1]}</span></td>
-          <td><div class="seg" style="margin:0">${["self", "ref", "last"].map(s => `<button data-src="${esc(n.name)}" data-v="${s}" class="${src === s ? "sel" : ""}"
-              ${s === "last" && !n.last ? 'disabled title="нет версии, где все тесты прошли"' : s === "last" ? `title="${esc(n.last.from)}"` : ""}>${SOURCE_NAME[s]}</button>`).join("")}</div></td></tr>`;
+          <td>${modeHalves(n.statuses)}${n.status === "broken" ? ' <span class="err small">сломано</span>' : ""}</td>
+          <td><div class="seg" style="margin:0">${SOURCES.map(s => {
+              const off = s === "last" ? !n.last : s.startsWith("self_") && !n.modes.includes(s.slice(5));
+              const tip = s === "last" ? (n.last ? n.last.from : "нет версии, где все тесты прошли") : off ? "у кирпичика нет этого режима" : "";
+              return `<button data-src="${esc(n.name)}" data-v="${s}" class="${src === s ? "sel" : ""}" ${off ? "disabled" : ""} ${tip ? `title="${esc(tip)}"` : ""}>${SOURCE_NAME[s]}</button>`;
+            }).join("")}</div></td></tr>`;
       }).join("")}</tbody></table>
       <p class="muted small mt">Импорт в коде задачи: ${nodes.filter(n => !n.depth).map(n => `<span class="mono">${n.kind === "slot" ? `from slots.${esc(n.slot)} import ${esc(n.symbol)}` : `from bricks.${esc(n.name)} import …`}</span>`).join(" · ")}</p></div>`;
-    $$("[data-src]").forEach(b => b.onclick = () => { asm[b.dataset.src] = { ...asm[b.dataset.src], source: b.dataset.v }; render(); });
+    if (nodes.length) renderBoardView($("#as-board"), id, { height: "380px", assemble: opt, sourceHtml: (name, n) => `<select class="bf-src" data-src-sel="${esc(name)}">${SOURCES.map(s => {
+        const off = s === "last" ? !n.last : s.startsWith("self_") && !n.modes.includes(s.slice(5));
+        return `<option value="${s}" ${(asm[name]?.source || "ref") === s ? "selected" : ""} ${off ? "disabled" : ""}>${SOURCE_NAME[s]}</option>`;
+      }).join("")}</select>` }).then(() => $$("[data-src-sel]").forEach(sel => sel.onchange = () => { asm[sel.dataset.srcSel] = { ...asm[sel.dataset.srcSel], source: sel.value }; refresh(); }));
+    $$("[data-src]").forEach(b => b.onclick = () => { asm[b.dataset.src] = { ...asm[b.dataset.src], source: b.dataset.v }; refresh(); });  // режим меняет поддерево
     $$("[data-impl]").forEach(s => s.onchange = () => { asm[s.dataset.impl] = { ...asm[s.dataset.impl], impl: s.value }; refresh(); });
-    $$("[data-all]").forEach(b => b.onclick = () => { Object.values(asm).forEach(x => { x.source = b.dataset.all; }); render(); });
+    $$("[data-all]").forEach(b => b.onclick = () => {
+      const want = b.dataset.all;
+      opt.nodes.forEach(n => { asm[n.name] = { ...asm[n.name], source: want.startsWith("self_") && !n.modes.includes(want.slice(5)) ? `self_${n.modes[0] || "scratch"}` : want }; });
+      refresh();
+    });
     const last = $("#as-last");
     if (last) last.onclick = () => { asm = JSON.parse(JSON.stringify(lastAsm)); refresh(); };
     $("#as-go").onclick = async () => {
-      try { const a = await api(`/api/tasks/${id}/attempts`, { method: "POST", json: { assembly: asm } }); location.hash = `#/attempt/${a.id}`; }
+      try { const a = await api(`/api/tasks/${id}/attempts`, { method: "POST", json: { assembly: asm, mode } }); location.hash = `#/attempt/${a.id}`; }
       catch (e) { toast(e.message, true); }
     };
   }
   render();
 }
 
-// ---------- граф «Состав» ----------
+// ---------- граф «Состав» — холст конструктора в режиме «только просмотр» ----------
 async function renderComposition(box, id) {
   const g = await api(`/api/tasks/${id}/graph`);
-  g.up = arr(g.up); g.down = arr(g.down);
-  const card = (n, cls = "") => {
-    const st = NODE_STATUS[n.status] || NODE_STATUS.new;
-    return `<a class="gnode ${cls}" href="#/task/${n.task_id ?? n.id}" data-g="${n.key}"><b>${esc(n.title)}</b>
-      <span class="small ${st[0]}">${st[1]}</span>${n.kind === "slot" ? `<span class="muted small">слот ${esc(n.slot)}</span>` : n.name ? `<span class="muted small mono">bricks.${esc(n.name)}</span>` : ""}</a>`;
-  };
-  const levels = {};
-  g.up.forEach(n => { n.key = `u${n.task_id}`; (levels[-1 - n.depth] ||= []).push(n); });
-  levels[0] = [{ ...g, key: "me", task_id: g.id }];
-  g.down.forEach(n => { n.key = `d${n.name}`; (levels[1 + n.depth] ||= []).push(n); });
-  const keys = Object.keys(levels).map(Number).sort((a, b) => a - b);
-  box.innerHTML = `<div class="card"><p class="muted small">Вверху — где используется эта задача, внизу — из чего она собрана (эталонная сборка). Клик — перейти к задаче.</p>
-    ${g.error ? `<p class="err">${esc(g.error)}</p>` : ""}${!g.up.length && !g.down.length ? '<p class="muted">Задача ни от чего не зависит и нигде не используется.</p>' : ""}
-    <div class="graph" id="graph"><svg class="glines"></svg>${keys.map(k => `<div class="glevel">${levels[k].map(n => card(n, k === 0 ? "me" : "")).join("")}</div>`).join("")}</div></div>`;
-  const svg = $(".glines", box), wrap = $("#graph", box);
-  const draw = () => {
-    const r0 = wrap.getBoundingClientRect(), at = k => { const el = $(`[data-g="${k}"]`, wrap); if (!el) return null; const r = el.getBoundingClientRect(); return { x: r.left - r0.left + r.width / 2, top: r.top - r0.top, bottom: r.bottom - r0.top }; };
-    const edges = [...g.up.map(n => [`u${n.task_id}`, n.child === g.id ? "me" : `u${n.child}`]),
-                   ...g.down.map(n => [n.parent ? `d${n.parent}` : "me", `d${n.name}`])];
-    svg.setAttribute("width", wrap.scrollWidth); svg.setAttribute("height", wrap.scrollHeight);
-    svg.innerHTML = edges.map(([a, b]) => { const p = at(a), q = at(b); if (!p || !q) return "";
-      const y1 = p.bottom, y2 = q.top, m = (y1 + y2) / 2;
-      return `<path d="M${p.x},${y1} C${p.x},${m} ${q.x},${m} ${q.x},${y2}" />`; }).join("");
-  };
-  requestAnimationFrame(draw);
-  // перерисовка при любом изменении размера; наблюдатель отключается, когда граф убрали со страницы
-  const ro = new ResizeObserver(() => { if (!wrap.isConnected) return ro.disconnect(); draw(); });
-  ro.observe(wrap);
+  box.innerHTML = `<div class="card"><div class="row"><p class="muted small grow" style="margin:0">Слева — из чего собрана задача (эталонная сборка), правее — где она используется.
+      Стрелка ведёт от используемого к использующему. Двойной клик по карточке — перейти к задаче; колесо — масштаб, перетаскивание фона — сдвиг.</p>
+      <a class="btn" href="#/builder/${id}">Открыть в конструкторе</a></div>
+    ${g.error ? `<p class="err">${esc(g.error)}</p>` : ""}${!arr(g.up).length && !arr(g.down).length ? '<p class="muted">Задача ни от чего не зависит и нигде не используется.</p>' : ""}
+    <div id="compose-board" class="mt"></div></div>`;
+  await renderBoardView($("#compose-board", box), id);
 }
 
 // ---------- мастер «Новая задача» ----------
@@ -325,7 +319,7 @@ function renderAssemblyTab(el, a) {
   el.innerHTML = `<p class="muted small">Кирпичики этой попытки. «Пишу сам» — файлы <span class="mono">bricks/…</span> в редакторе; при «Проверить» сначала гоняются их собственные тесты.</p>
     ${a.bricks.map(b => b.error ? `<p class="err small">${esc(b.error)}</p>` : `<div class="row small" style="padding:4px 0 4px ${b.depth * 14}px;border-bottom:1px solid var(--line)">
       <span class="mono">${b.kind === "slot" ? `slots.${esc(b.slot)}` : `bricks.${esc(b.name)}`}</span><span class="grow"><a href="#/task/${b.task_id}">${esc(b.title)}</a></span>
-      <span class="badge ${b.source === "self" ? "warn" : ""}">${SOURCE_NAME[b.source]}</span></div>`).join("")}
+      <span class="badge ${b.source.startsWith("self") ? "warn" : ""}">${SOURCE_NAME[b.source] || b.source}</span></div>`).join("")}
     ${slots.length && a.status === "active" ? '<button class="mt" id="all-impl">Проверить со всеми реализациями слота</button><div id="impl-out" class="mt"></div>' : ""}`;
   const b = $("#all-impl", el);
   if (b) b.onclick = async () => {

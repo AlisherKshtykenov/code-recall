@@ -9,7 +9,7 @@ from fastapi import Depends, FastAPI, HTTPException, Response, UploadFile
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import attempts, backup, checking, library, llm, mapview, review, reviews, runner, semantic, stats, tasks
+from . import attempts, backup, builder, checking, library, llm, mapview, migrations, review, reviews, runner, semantic, stats, tasks
 from .db import Attempt, ReviewSession, SessionLocal, Task, get_setting, init_db, set_setting
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -24,6 +24,7 @@ async def lifespan(app):
             a.status = "active"
             a.finished_at = None
         db.commit()
+    migrations.migrate_modes()  # разово: режимы «Библиотека / С нуля»
     backup.start_daily_thread()
     runner.start_reaper()
     start_stale_reaper()
@@ -175,6 +176,7 @@ def test_llm():
 
 
 app.include_router(library.router)
+app.include_router(builder.router)
 app.include_router(mapview.router)
 app.include_router(tasks.router)
 app.include_router(tasks.file_router)

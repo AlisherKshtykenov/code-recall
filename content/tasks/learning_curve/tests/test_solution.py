@@ -90,21 +90,6 @@ def test_does_not_fit_given_estimator():
     assert not hasattr(est, "coef_"), "переданная модель не обучается — обучаются копии"
 
 
-def test_any_object_with_fit_predict_score():
-    class Majority:
-        def fit(self, X, y):
-            self.value = np.bincount(y).argmax()
-            return self
-
-        def predict(self, X):
-            return np.full(len(X), self.value)
-
-        def score(self, X, y):
-            return float((self.predict(X) == y).mean())
-    sizes, train, test = learning_curve(Majority(), X, y, cv=4, train_sizes=[0.25, 1.0])
-    assert train.shape == test.shape == (2, 4) and np.allclose(test, test[:1]), "любой объект с fit/predict/score; у «всегда частый класс» качество не растёт"
-
-
 def test_more_data_helps_on_average():
     sizes, _, test = learning_curve(LogisticRegression(max_iter=500), X, y, cv=5, train_sizes=[0.1, 1.0])
     assert test[1].mean() >= test[0].mean() - 0.02, "на всех данных качество на тесте не хуже, чем на 10%"

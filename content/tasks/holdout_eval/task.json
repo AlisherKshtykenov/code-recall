@@ -1,8 +1,45 @@
 {
-  "title": "holdout_eval (оценка на отложенной выборке)", "kind": "ml", "topic": "ML/Оценка/Comparison",
-  "tags": ["comparison", "sklearn", "defect_detection"], "main": "solution.py", "timeout": 120,
+  "title": "holdout_eval (оценка на отложенной выборке)",
+  "kind": "ml",
+  "topic": "ML/Оценка/Comparison",
+  "tags": [
+    "comparison",
+    "sklearn",
+    "defect_detection"
+  ],
+  "main": "solution.py",
+  "timeout": 120,
   "library": "нет: train_test_split(stratify=y) + fit + метрики на test",
-  "deps": [{"name": "stratified_split", "task": "stratified_split"}],
-  "map_notes": {"defect_detection": "одна честная оценка baseline на отложенных 20%"},
-  "forbidden": {"modules": ["sklearn"], "names": ["train_test_split", "cross_validate", "cross_val_score", "clone"]}
+  "deps": [
+    {
+      "name": "stratified_split",
+      "task": "stratified_split",
+      "modes": [
+        "scratch"
+      ]
+    }
+  ],
+  "map_notes": {
+    "defect_detection": "одна честная оценка baseline на отложенных 20%"
+  },
+  "forbidden_modules": [
+    "sklearn"
+  ],
+  "forbidden_names": [
+    "train_test_split",
+    "cross_validate",
+    "cross_val_score",
+    "clone"
+  ],
+  "library_function": "sklearn.model_selection.train_test_split + sklearn.base.clone",
+  "required_names": [
+    "train_test_split",
+    "clone"
+  ],
+  "required_kwargs": {
+    "train_test_split": [
+      "stratify",
+      "test_size"
+    ]
+  }
 }

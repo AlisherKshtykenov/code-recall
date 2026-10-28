@@ -12,7 +12,7 @@ warnings.filterwarnings("ignore")  # UndefinedMetricWarning на коротки�
 
 @pytest.fixture(scope="module")
 def full():
-    return run(seed=0)  # обычный запуск: 12 эпох
+    return run(seed=0, epochs=20)  # обычный запуск; 20 эпох — запас: метрики не зависят от того, как кирпичики тратят генератор случайных чисел
 
 
 def test_data_shapes_and_defect_share(data_dir):

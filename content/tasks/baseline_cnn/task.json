@@ -1,10 +1,70 @@
 {
-  "title": "baseline_cnn (простая CNN для дефектов)", "kind": "ml", "topic": "ML/Нейросети/Models",
-  "tags": ["модель", "torch", "cnn", "defect_detection"], "main": "solution.py", "timeout": 180,
+  "title": "baseline_cnn (простая CNN для дефектов)",
+  "kind": "ml",
+  "topic": "ML/Нейросети/Models",
+  "tags": [
+    "модель",
+    "torch",
+    "cnn",
+    "defect_detection"
+  ],
+  "main": "solution.py",
+  "timeout": 180,
   "library": "nn.Sequential(conv_block × 3, nn.Flatten, nn.Dropout, nn.Linear)",
-  "deps": [{"name": "conv_block", "task": "conv_block"}, {"name": "flatten", "task": "flatten"},
-           {"name": "dropout", "task": "dropout"}, {"name": "linear", "task": "linear"}],
-  "map_notes": {"defect_detection": "базовая модель: с ней сравниваются resnet и efficientnet"},
-  "forbidden": {"modules": ["torch.nn.functional", "torchvision"],
-                "names": ["Conv2d", "BatchNorm2d", "ReLU", "MaxPool2d", "Linear", "Flatten", "Dropout", "Sequential", "functional"]}
+  "deps": [
+    {
+      "name": "conv_block",
+      "task": "conv_block"
+    },
+    {
+      "name": "flatten",
+      "task": "flatten",
+      "modes": [
+        "scratch"
+      ]
+    },
+    {
+      "name": "dropout",
+      "task": "dropout",
+      "modes": [
+        "scratch"
+      ]
+    },
+    {
+      "name": "linear",
+      "task": "linear",
+      "modes": [
+        "scratch"
+      ]
+    }
+  ],
+  "map_notes": {
+    "defect_detection": "базовая модель: с ней сравниваются resnet и efficientnet"
+  },
+  "forbidden_modules": [
+    "torch.nn.functional",
+    "torchvision"
+  ],
+  "forbidden_names": [
+    "Conv2d",
+    "BatchNorm2d",
+    "ReLU",
+    "MaxPool2d",
+    "Linear",
+    "Flatten",
+    "Dropout",
+    "Sequential",
+    "functional"
+  ],
+  "library_function": "torch.flatten, torch.nn.functional.dropout, torch.nn.functional.linear",
+  "required_names": [
+    "flatten",
+    "dropout",
+    "linear"
+  ],
+  "required_kwargs": {
+    "dropout": [
+      "training"
+    ]
+  }
 }

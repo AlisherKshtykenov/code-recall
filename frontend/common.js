@@ -236,7 +236,7 @@ function testsHtml(check, opts = {}) {
       ${check.ms != null ? `<span class="muted small">${(check.ms / 1000).toFixed(1)} с</span>` : ""}</div>`
     + check.tests.map(t => {
       const [cls, ico] = TEST_ICON[t.status] || ["muted", "?"];
-      return `<div class="test-row"><span class="${cls}">${ico}</span><span>${t.brick ? `<span class="badge" title="${esc(t.brick_title || "")}">кирпичик ${esc(t.brick)}</span> ` : ""}<b>${esc(t.name)}</b> <span class="muted small">${esc(t.file)}</span></span>
+      return `<div class="test-row"><span class="${cls}">${ico}</span><span>${t.mode ? `<span class="badge mode-${t.mode}">${MODE_NAME[t.mode] || t.mode}</span> ` : ""}${t.brick ? `<span class="badge" title="${esc(t.brick_title || "")}">кирпичик ${esc(t.brick)}</span> ` : ""}<b>${esc(t.name)}</b> <span class="muted small">${esc(t.file)}</span></span>
         <span class="muted small">${t.time ? t.time.toFixed(2) + " с" : ""}</span>
         ${t.message ? `<div class="msg">${esc(t.message.split("\n").slice(0, 4).join("\n"))}</div>` : ""}
         ${(() => {
@@ -370,4 +370,18 @@ async function diffSwitcher(el, mine, ref, labels) {
   $$("[data-d]", el).forEach(b => b.onclick = () => { mode = b.dataset.d; render(); });
   await render();
   return { dispose: () => view && view.dispose() };
+}
+
+// ---------------- режимы: «Библиотека» (через готовую функцию) и «С нуля» (своими руками) ----------------
+const MODES = ["library", "scratch"];
+const MODE_NAME = { library: "библиотека", scratch: "с нуля" };
+const MODE_TITLE = { library: "Библиотека", scratch: "С нуля" };
+const HALF = { new: ["muted", "○", "новая"], due: ["warn", "⟳", "пора повторить"], solved: ["ok", "✓", "решено"], learned: ["ok", "✓", "выучено"],
+               weak: ["err", "!", "слабо"], none: ["none", "–", "нет режима"], planned: ["none", "◌", "запланировано"], concept: ["none", "◌", "концепт"] };
+// статус задачи из двух половинок: слева «Библиотека», справа «С нуля» — у каждой свой цвет
+function modeHalves(statuses) {
+  return `<span class="halves">${MODES.map(m => {
+    const st = (statuses || {})[m] || "none", [c, i, t] = HALF[st] || HALF.none;
+    return `<span class="half ${c}" title="${MODE_TITLE[m]}: ${t}">${i}</span>`;
+  }).join("")}</span>`;
 }

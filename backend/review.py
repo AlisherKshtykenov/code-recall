@@ -45,39 +45,75 @@ def interval_days(s: float) -> float:
     return s / FACTOR * (RETENTION ** (1 / DECAY) - 1)
 
 
-def replay(db, task: Task):
-    """FSRS по истории: сданные попытки (уровень по оценке или вручную) и брошенные («забыл»).
-    Работа над ошибками на стабильность не влияет, но двигает дату: шаг 3 пройден без подглядывания —
-    повтор завтра (не дольше), не пройден — сегодня же."""
-    rows = (db.query(Attempt).filter(Attempt.task_id == task.id, Attempt.status.in_(("submitted", "abandoned")),
-                                     Attempt.grade.isnot(None), Attempt.finished_at.isnot(None))
-            .order_by(Attempt.finished_at).all())
-    # кирпичик, написанный внутри составной задачи, — тоже повторение кирпичика («нормально» / «забыл»)
+def _replay_mode(db, task: Task, mode: str):
+    """FSRS одного режима по его истории -> dict(due_at, fsrs_s, fsrs_d, last_review, reps, lapses) или None."""
+    rows = [a for a in db.query(Attempt).filter(Attempt.task_id == task.id, Attempt.status.in_(("submitted", "abandoned")),
+                                                Attempt.grade.isnot(None), Attempt.finished_at.isnot(None)).all()
+            if (a.mode or "scratch") == mode]
+    # кирпичик, написанный внутри составной задачи, — повторение кирпичика в том режиме, в котором его написали
     rows += [SimpleNamespace(grade=e.grade, finished_at=e.at, brick_failed=not e.passed)
-             for e in db.query(BrickEvent).filter_by(task_id=task.id).all()]
+             for e in db.query(BrickEvent).filter_by(task_id=task.id).all() if (e.mode or "scratch") == mode]
     rows.sort(key=lambda x: x.finished_at)
-    sessions = (db.query(ReviewSession).filter(ReviewSession.task_id == task.id,
-                                               ReviewSession.status.in_(("passed", "failed")))
-                .order_by(ReviewSession.finished_at).all())
+    sessions = sorted((r for r in db.query(ReviewSession).filter(ReviewSession.task_id == task.id,
+                                                                 ReviewSession.status.in_(("passed", "failed"))).all()
+                       if (r.attempt.mode or "scratch") == mode), key=lambda r: r.finished_at)
     state, last, lapses = None, None, 0
     for a in rows:
         state = fsrs_step(state, a.grade, (a.finished_at - last).total_seconds() / 86400 if last else 0)
         lapses += a.grade == 1
         last = a.finished_at
-    task.reps, task.lapses = len(rows), lapses
     if state is None:
-        task.fsrs_s = task.fsrs_d = task.last_review = task.due_at = None
-        return
-    task.fsrs_s, task.fsrs_d, task.last_review = state["s"], state["d"], last
+        return None
     days = max(1, round(interval_days(state["s"])))
-    task.due_at = datetime.combine((last + timedelta(days=days)).date(), datetime.min.time())
+    due = datetime.combine((last + timedelta(days=days)).date(), datetime.min.time())
     if getattr(rows[-1], "brick_failed", False):  # кирпичик упал внутри составной задачи — повторить его сегодня
-        task.due_at = datetime.combine(last.date(), datetime.min.time())
+        due = datetime.combine(last.date(), datetime.min.time())
     after = [s for s in sessions if s.finished_at > last]
     if after:  # последнее событие — работа над ошибками: её итог задаёт дату повтора
-        s = after[-1]
-        day = s.finished_at.date() + timedelta(days=1 if s.status == "passed" else 0)
-        task.due_at = datetime.combine(day, datetime.min.time())
+        day = after[-1].finished_at.date() + timedelta(days=1 if after[-1].status == "passed" else 0)
+        due = datetime.combine(day, datetime.min.time())
+    return {"due_at": due, "fsrs_s": state["s"], "fsrs_d": state["d"], "last_review": last, "reps": len(rows), "lapses": lapses}
+
+
+def replay(db, task: Task):
+    """FSRS по истории — отдельно для каждого режима (строки Schedule). В самой задаче — сводка:
+    ближайшая дата повтора среди режимов (для списков и счётчиков «пора повторить»)."""
+    from .db import Schedule
+    found = {}
+    for mode in ("library", "scratch"):
+        st = _replay_mode(db, task, mode)
+        row = db.get(Schedule, (task.id, mode))
+        if st is None:
+            if row is not None:
+                db.delete(row)
+            continue
+        if row is None:
+            row = Schedule(task_id=task.id, mode=mode)
+            db.add(row)
+        for k, v in st.items():
+            setattr(row, k, v)
+        found[mode] = st
+    if not found:
+        task.fsrs_s = task.fsrs_d = task.last_review = task.due_at = None
+        task.reps = task.lapses = 0
+        return
+    first = min(found.values(), key=lambda st: st["due_at"])  # ближайший повтор
+    task.due_at, task.fsrs_s, task.fsrs_d = first["due_at"], first["fsrs_s"], first["fsrs_d"]
+    task.last_review = max(st["last_review"] for st in found.values())
+    task.reps, task.lapses = sum(st["reps"] for st in found.values()), sum(st["lapses"] for st in found.values())
+
+
+def schedules(db, task: Task) -> dict:
+    """{режим: Schedule} — только режимы, в которых уже были повторения."""
+    from .db import Schedule
+    return {r.mode: r for r in db.query(Schedule).filter_by(task_id=task.id).all()}
+
+
+def mode_status(row) -> str:
+    """new — в этом режиме ещё не решал; due — пора повторить; solved — повтор позже."""
+    if row is None or row.due_at is None:
+        return "new"
+    return "due" if row.due_at.date() <= datetime.now().date() else "solved"
 
 
 def score_grade(score) -> int:
@@ -109,66 +145,88 @@ def weak_bricks(db, t: Task, by_name: dict, today) -> list[str]:
     return out
 
 
+def _reason(db, t: Task, mode: str, last, today) -> str:
+    """Почему эта пара (задача, режим) сегодня в списке."""
+    ago = (today - last.finished_at.date()).days
+    lastrev = max((rv for at in t.attempts if (at.mode or "scratch") == mode for rv in at.reviews if rv.status in ("passed", "failed")),
+                  key=lambda r: r.finished_at, default=None)
+    if last.status == "brick":
+        parent = db.get(Task, last.event.parent_task_id)
+        return (f"{t.title}: ошибка в задаче «{parent.title if parent else '?'}»" + (f" — {last.event.note}" if last.event.note else "")
+                if not last.event.passed else f"написан в задаче «{parent.title if parent else '?'}» — тесты прошли")
+    if lastrev and lastrev.finished_at > last.finished_at:
+        return ("работа над ошибками пройдена — закрепляем на следующий день" if lastrev.status == "passed"
+                else "работа над ошибками не пройдена — повторить сегодня")
+    if last.status == "abandoned":
+        return "прошлая попытка брошена"
+    if last.grade <= 2:
+        return f"прошлый раз ошибся: «{GRADES[last.grade]}», оценка {last.score}"
+    return f"давно не повторял: {ago} дн."
+
+
 def today_lists(db) -> dict:
+    """Списки «Сегодня» по парам (задача, режим): «recall · библиотека» и «recall · с нуля» — разные строки."""
+    from . import taskfs
     today = datetime.now().date()
     overdue, due, new, upcoming, reviews = [], [], [], [], []
     for r in db.query(ReviewSession).filter_by(status="active").all():
         t = db.get(Task, r.task_id)
+        mode = r.attempt.mode or "scratch"
         reviews.append({"id": r.id, "task_id": t.id, "title": t.title, "kind": t.kind, "tag": t.tag, "step": r.step,
+                        "mode": mode, "mode_name": taskfs.MODE_NAME[mode],
                         "attempt_id": r.attempt_id, "started_at": r.started_at.isoformat(timespec="minutes"),
                         "reason": f"работа над ошибками не закончена: шаг {r.step} из 3"})
     events = {}
     for e in db.query(BrickEvent).order_by(BrickEvent.at).all():
-        events.setdefault(e.task_id, []).append(e)
+        events.setdefault((e.task_id, e.mode or "scratch"), []).append(e)
     tasks = db.query(Task).all()
     by_name = {t.name: t for t in tasks}
     for t in tasks:
-        done = sorted((a for a in t.attempts if a.status in ("submitted", "abandoned") and a.grade is not None),
-                      key=lambda a: a.finished_at)
-        last = done[-1] if done else None
-        ev = events.get(t.id, [])
-        if ev and (not last or ev[-1].at > last.finished_at):
-            last = SimpleNamespace(finished_at=ev[-1].at, grade=ev[-1].grade, score=None, status="brick", event=ev[-1])
-        item = {"id": t.id, "title": t.title, "kind": t.kind, "tag": t.tag,
-                "due_at": t.due_at.date().isoformat() if t.due_at else None,
-                "best_score": max((a.score for a in done if a.score is not None), default=None),
-                "last_grade": GRADES[last.grade] if last else None,
-                "active_attempt": next((a.id for a in reversed(t.attempts) if a.status == "active"), None)}
-        if not last:
-            item["reason"] = f"ещё не решал (добавлена {t.created_at.date().isoformat()})"
-            new.append(item)
-            continue
-        ago = (today - last.finished_at.date()).days
-        lastrev = max((rv for at in t.attempts for rv in at.reviews if rv.status in ("passed", "failed")),
-                      key=lambda r: r.finished_at, default=None)
-        if last.status == "brick":
-            parent = db.get(Task, last.event.parent_task_id)
-            reason = (f"{t.title}: ошибка в задаче «{parent.title if parent else '?'}»" + (f" — {last.event.note}" if last.event.note else "")
-                      if not last.event.passed else f"написан в задаче «{parent.title if parent else '?'}» — тесты прошли")
-        elif lastrev and lastrev.finished_at > last.finished_at:
-            reason = ("работа над ошибками пройдена — закрепляем на следующий день" if lastrev.status == "passed"
-                      else "работа над ошибками не пройдена — повторить сегодня")
-        elif last.status == "abandoned":
-            reason = "прошлая попытка брошена"
-        elif last.grade <= 2:
-            reason = f"прошлый раз ошибся: «{GRADES[last.grade]}», оценка {last.score}"
-        else:
-            reason = f"давно не повторял: {ago} дн."
-        weak = weak_bricks(db, t, by_name, today)
-        if weak:
-            reason += " · сначала повтори кирпичик " + ", ".join(f"«{w}»" for w in weak)
-        if t.broken:
-            reason += f" · сломано зависимостью: {t.broken}"
-        d = t.due_at.date()
-        if d < today:
-            item["reason"] = f"просрочено на {(today - d).days} дн. · {reason}"
-            overdue.append(item)
-        elif d == today:
-            item["reason"] = reason
-            due.append(item)
-        elif d <= today + timedelta(days=7):
-            item["reason"] = f"последний раз: «{GRADES[last.grade]}», {ago} дн. назад"
-            upcoming.append(item)
+        modes = taskfs.modes_of(json.loads(t.current.files)) if t.current else []
+        if not modes:
+            continue  # концепт — только README, в повторения не входит
+        sched = schedules(db, t)
+        started = [m for m in modes if m in sched]
+        library_done = any(a.status == "submitted" and (a.mode or "scratch") == "library" for a in t.attempts)
+        for mode in modes:
+            done = sorted((a for a in t.attempts if a.status in ("submitted", "abandoned") and a.grade is not None
+                           and (a.mode or "scratch") == mode), key=lambda a: a.finished_at)
+            last = done[-1] if done else None
+            ev = events.get((t.id, mode), [])
+            if ev and (not last or ev[-1].at > last.finished_at):
+                last = SimpleNamespace(finished_at=ev[-1].at, grade=ev[-1].grade, score=None, status="brick", event=ev[-1])
+            row = sched.get(mode)
+            item = {"id": t.id, "title": t.title, "kind": t.kind, "tag": t.tag, "mode": mode, "mode_name": taskfs.MODE_NAME[mode],
+                    "modes": modes, "due_at": row.due_at.date().isoformat() if row and row.due_at else None,
+                    "best_score": max((a.score for a in done if a.score is not None), default=None),
+                    "last_grade": GRADES[last.grade] if last else None,
+                    "active_attempt": next((a.id for a in reversed(t.attempts) if a.status == "active" and (a.mode or "scratch") == mode), None)}
+            if not last or row is None:
+                # новая: сначала предлагаем «Библиотеку»; «С нуля» — отдельной строкой, когда библиотека уже начата
+                if mode == "scratch" and "library" in modes and "library" not in started:
+                    continue
+                item["reason"] = (f"ещё не решал (добавлена {t.created_at.date().isoformat()})" if not started
+                                  else f"«{taskfs.MODE_NAME[started[0]]}» уже начата — теперь «{taskfs.MODE_NAME[mode]}»")
+                new.append(item)
+                continue
+            reason = _reason(db, t, mode, last, today)
+            if mode == "scratch" and "library" in modes and not library_done:
+                reason += " · сначала освой применение («Библиотека» ещё ни разу не сдана)"
+            weak = weak_bricks(db, t, by_name, today)
+            if weak:
+                reason += " · сначала повтори кирпичик " + ", ".join(f"«{w}»" for w in weak)
+            if t.broken:
+                reason += f" · сломано зависимостью: {t.broken}"
+            d = row.due_at.date()
+            if d < today:
+                item["reason"] = f"просрочено на {(today - d).days} дн. · {reason}"
+                overdue.append(item)
+            elif d == today:
+                item["reason"] = reason
+                due.append(item)
+            elif d <= today + timedelta(days=7):
+                item["reason"] = f"последний раз: «{GRADES[last.grade]}», {(today - last.finished_at.date()).days} дн. назад"
+                upcoming.append(item)
     overdue.sort(key=lambda x: x["due_at"])
     upcoming.sort(key=lambda x: x["due_at"])
     return {"overdue": overdue, "due": due, "new": new, "upcoming": upcoming, "reviews": reviews}

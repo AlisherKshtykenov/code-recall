@@ -1,11 +1,60 @@
 {
-  "title": "Детекция дефектов: сравнение", "kind": "ml", "topic": "ML/Проекты/defect_detection",
-  "tags": ["стена", "torch", "cnn", "comparison", "defect_detection"], "main": "compare.py", "timeout": 900,
+  "title": "Детекция дефектов: сравнение",
+  "kind": "ml",
+  "topic": "ML/Проекты/defect_detection",
+  "tags": [
+    "стена",
+    "torch",
+    "cnn",
+    "comparison",
+    "defect_detection"
+  ],
+  "main": "compare.py",
+  "timeout": 900,
   "library": "нет: цепочка из кирпичиков",
-  "deps": [{"name": "baseline", "task": "defect_baseline"}, {"name": "ablation", "task": "ablation"},
-           {"name": "benchmark_table", "task": "benchmark_table"}, {"name": "learning_curve", "task": "learning_curve"},
-           {"name": "adam", "task": "adam"}, {"name": "sgd", "task": "sgd"}, {"name": "normalize_images", "task": "normalize_images"},
-           {"name": "recall", "task": "recall"}],
-  "map_notes": {"defect_detection": "стена: какие детали помогают и хватает ли данных"},
-  "forbidden": {"modules": ["sklearn", "torch.nn.functional", "torchvision"], "names": ["learning_curve_display"]}
+  "deps": [
+    {
+      "name": "baseline",
+      "task": "defect_baseline"
+    },
+    {
+      "name": "ablation",
+      "task": "ablation"
+    },
+    {
+      "name": "benchmark_table",
+      "task": "benchmark_table"
+    },
+    {
+      "name": "learning_curve",
+      "task": "learning_curve"
+    },
+    {
+      "name": "adam",
+      "task": "adam"
+    },
+    {
+      "name": "sgd",
+      "task": "sgd"
+    },
+    {
+      "name": "normalize_images",
+      "task": "normalize_images"
+    },
+    {
+      "name": "recall",
+      "task": "recall"
+    }
+  ],
+  "map_notes": {
+    "defect_detection": "стена: какие детали помогают и хватает ли данных"
+  },
+  "forbidden_modules": [
+    "sklearn",
+    "torch.nn.functional",
+    "torchvision"
+  ],
+  "forbidden_names": [
+    "learning_curve_display"
+  ]
 }

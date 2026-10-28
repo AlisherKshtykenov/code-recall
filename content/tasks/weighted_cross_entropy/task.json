@@ -1,9 +1,48 @@
 {
-  "title": "weighted_cross_entropy (BCE по логитам с весом брака)", "kind": "ml", "topic": "ML/Обучение/Losses",
-  "tags": ["losses", "torch", "imbalance", "defect_detection"], "implements": "loss", "main": "solution.py", "timeout": 60,
+  "title": "weighted_cross_entropy (BCE по логитам с весом брака)",
+  "kind": "ml",
+  "topic": "ML/Обучение/Losses",
+  "tags": [
+    "losses",
+    "torch",
+    "imbalance",
+    "defect_detection"
+  ],
+  "implements": "loss",
+  "main": "solution.py",
+  "timeout": 60,
   "library": "torch.nn.functional.binary_cross_entropy_with_logits(pos_weight)",
-  "map_notes": {"defect_detection": "потеря для обучения baseline_cnn: pos_weight = отрицательных / положительных из class_weights"},
-  "forbidden": {"modules": ["torch.nn", "torch.nn.functional", "scipy", "sklearn"],
-                "names": ["binary_cross_entropy_with_logits", "binary_cross_entropy", "BCEWithLogitsLoss", "BCELoss", "softplus", "logsigmoid",
-                          "log_sigmoid", "sigmoid", "logaddexp", "cross_entropy", "nn", "functional", "special"]}
+  "map_notes": {
+    "defect_detection": "потеря для обучения baseline_cnn: pos_weight = отрицательных / положительных из class_weights"
+  },
+  "forbidden_modules": [
+    "torch.nn",
+    "torch.nn.functional",
+    "scipy",
+    "sklearn"
+  ],
+  "forbidden_names": [
+    "binary_cross_entropy_with_logits",
+    "binary_cross_entropy",
+    "BCEWithLogitsLoss",
+    "BCELoss",
+    "softplus",
+    "logsigmoid",
+    "log_sigmoid",
+    "sigmoid",
+    "logaddexp",
+    "cross_entropy",
+    "nn",
+    "functional",
+    "special"
+  ],
+  "library_function": "torch.nn.functional.binary_cross_entropy_with_logits",
+  "required_names": [
+    "binary_cross_entropy_with_logits"
+  ],
+  "required_kwargs": {
+    "binary_cross_entropy_with_logits": [
+      "pos_weight"
+    ]
+  }
 }

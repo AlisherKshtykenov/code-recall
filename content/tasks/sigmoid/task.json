@@ -1,8 +1,42 @@
 {
-  "title": "sigmoid", "kind": "ml", "topic": "ML/Нейросети/Activations",
-  "tags": ["activations", "torch", "defect_detection"], "implements": "activation", "main": "solution.py", "timeout": 60,
+  "title": "sigmoid",
+  "kind": "ml",
+  "topic": "ML/Нейросети/Activations",
+  "tags": [
+    "activations",
+    "torch",
+    "defect_detection"
+  ],
+  "implements": "activation",
+  "main": "solution.py",
+  "timeout": 60,
   "library": "torch.sigmoid",
-  "map_notes": {"defect_detection": "логит брака -> вероятность брака на выходе baseline_cnn"},
-  "forbidden": {"modules": ["torch.nn", "torch.nn.functional", "scipy", "numpy"],
-                "names": ["sigmoid", "sigmoid_", "expit", "logistic", "logsigmoid", "tanh", "softmax", "softplus", "Sigmoid", "nn", "functional", "special"]}
+  "map_notes": {
+    "defect_detection": "логит брака -> вероятность брака на выходе baseline_cnn"
+  },
+  "forbidden_modules": [
+    "torch.nn",
+    "torch.nn.functional",
+    "scipy",
+    "numpy"
+  ],
+  "forbidden_names": [
+    "sigmoid",
+    "sigmoid_",
+    "expit",
+    "logistic",
+    "logsigmoid",
+    "tanh",
+    "softmax",
+    "softplus",
+    "Sigmoid",
+    "nn",
+    "functional",
+    "special"
+  ],
+  "library_function": "torch.sigmoid",
+  "required_names": [
+    "sigmoid"
+  ],
+  "required_kwargs": {}
 }

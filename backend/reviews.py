@@ -55,6 +55,11 @@ def version_files(db, r):
     return json.loads(v.files), json.loads(v.roles or "{}")
 
 
+def rmode(r) -> str:
+    """Режим работы над ошибками = режим исходной попытки (эталон для сравнения — того же режима)."""
+    return r.attempt.mode or "scratch"
+
+
 def asm(r) -> dict:
     return json.loads(r.attempt.assembly or "{}")
 
@@ -63,9 +68,9 @@ def ref_all(db, r) -> dict:
     """Эталон всего, что можно переписывать: свои файлы и кирпичики «пишу сам» из сборки попытки."""
     files, _ = version_files(db, r)
     try:
-        return bricks.reference_code(db, r.attempt.task, files, asm(r))
+        return bricks.reference_code(db, r.attempt.task, files, asm(r), rmode(r))
     except bricks.DepError:
-        return taskfs.reference_files(files)
+        return taskfs.reference_files(files, rmode(r))
 
 
 def brick_label(db, r, path: str) -> str:
@@ -74,7 +79,7 @@ def brick_label(db, r, path: str) -> str:
         return ""
     files, _ = version_files(db, r)
     try:
-        n = bricks.brick_of(db, r.attempt.task, files, asm(r)).get(path)
+        n = bricks.brick_of(db, r.attempt.task, files, asm(r), rmode(r)).get(path)
     except bricks.DepError:
         n = None
     return f"кирпичик {n['name']} ({n['title']})" if n else ""
@@ -97,7 +102,7 @@ def write_workdir(db, r: ReviewSession):
     files, _ = version_files(db, r)
     code = run_code(db, r, json.loads(r.work or "{}").get(current_file(r), ""))
     try:
-        code, lib = bricks.assemble(db, r.attempt.task, files, asm(r), code)
+        code, lib = bricks.assemble(db, r.attempt.task, files, asm(r), code, rmode(r))
     except bricks.DepError:
         lib = {}
     taskfs.write_code(rdir(r), code)
@@ -110,6 +115,7 @@ def public(db, r: ReviewSession) -> dict:
     target = current_file(r)
     ref = ref_all(db, r)
     out = {"id": r.id, "brick": brick_label(db, r, target), "attempt_id": a.id, "task_id": t.id, "title": t.title, "kind": t.kind,
+           "mode": rmode(r), "mode_name": taskfs.MODE_NAME[rmode(r)],
            "description": files.get("description.md", ""), "status": r.status, "step": r.step,
            "step_name": STEPS.get(r.step), "files": json.loads(r.files), "idx": r.idx, "file": target,
            "roles": roles, "all_files": sorted(ref), "peeked": bool(r.peeked), "peeks": r.peeks or 0, "checks": r.checks,
@@ -131,6 +137,7 @@ def journal_row(r: ReviewSession, task) -> dict:
     log = json.loads(r.log or "[]")
     return {"type": "review", "id": r.id, "attempt_id": r.attempt_id, "task_id": task.id, "task": task.title,
             "kind": task.kind, "status": r.status, "status_name": REVIEW_STATUS.get(r.status, r.status),
+            "mode": rmode(r), "mode_name": taskfs.MODE_NAME[rmode(r)],
             "date": (r.finished_at or r.started_at).isoformat(timespec="minutes"),
             "started_at": r.started_at.isoformat(timespec="minutes"), "step": r.step,
             "files": json.loads(r.files), "total_ms": sum(x["ms"] for x in log), "log": log,
@@ -222,7 +229,7 @@ def start(aid: int, body: StartIn, db=Depends(get_db)):
         return public(db, open_)  # незакрытая работа — продолжаем её
     v = db.get(TaskVersion, a.version_id)
     try:
-        written = bricks.written_paths(db, a.task, json.loads(v.files), json.loads(a.assembly or "{}"))
+        written = bricks.written_paths(db, a.task, json.loads(v.files), json.loads(a.assembly or "{}"), a.mode or "scratch")
     except bricks.DepError as e:
         raise HTTPException(400, str(e))
     files = [f for f in (body.files or written) if f in written]
@@ -340,7 +347,7 @@ def check(rid: int, db=Depends(get_db)):
             python = taskfs.resolve_python(task.python)
             version = db2.get(TaskVersion, rr.version_id)
         try:
-            res = checking.run_tests(task, version, code, python, job, assembly)
+            res = checking.run_tests(task, version, code, python, job, assembly, rmode(rr))
         except Exception as e:
             res = {"fatal": f"проверка упала: {e}", "tests": [], "passed": 0, "total": 0, "broken": 0}
         ok = bool(res.get("total")) and res["passed"] == res["total"]

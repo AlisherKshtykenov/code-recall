@@ -1,4 +1,4 @@
-"""holdout_eval: на том же разбиении (stratified_split с тем же seed) — те же метрики, что посчитать руками со sklearn."""
+"""holdout_eval: на том разбиении, что сделала функция (test_index), — те же метрики, что посчитать руками со sklearn."""
 import numpy as np
 import pytest
 from sklearn.datasets import make_classification
@@ -6,7 +6,6 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import average_precision_score, confusion_matrix, f1_score, recall_score
 from sklearn.svm import LinearSVC
 
-from bricks.stratified_split import stratified_split
 from solution import holdout_eval
 
 X, y = make_classification(n_samples=200, n_features=6, weights=[0.9, 0.1], random_state=0)
@@ -18,7 +17,10 @@ METRICS = {"recall": recall_score, "f1": f1_score, "confusion_matrix": confusion
 def test_metrics_like_manual_split(seed, test_size):
     got = holdout_eval(LogisticRegression(max_iter=500), X, y, METRICS, score_metrics={"pr_auc": average_precision_score},
                        test_size=test_size, random_state=seed)
-    X_tr, X_te, y_tr, y_te = stratified_split(X, y, test_size=test_size, random_state=seed, stratify=y)
+    te = got["test_index"]  # разбиение, которое сделала сама функция (своё или sklearn)
+    tr = np.setdiff1d(np.arange(len(y)), te)
+    X_tr, X_te, y_tr, y_te = X[tr], X[te], y[tr], y[te]
+    assert abs(len(te) - test_size * len(y)) <= 1 and abs(y[te].mean() - y.mean()) < 0.05, "test — нужной доли, брак в нём — как во всей выборке"
     model = LogisticRegression(max_iter=500).fit(X_tr, y_tr)
     pred, prob = model.predict(X_te), model.predict_proba(X_te)[:, 1]
     assert np.isclose(got["recall"], recall_score(y_te, pred)) and np.isclose(got["f1"], f1_score(y_te, pred)), "recall и f1 как руками"
@@ -52,6 +54,9 @@ def test_decision_function_fallback():
 
 def test_no_scores_is_error():
     class NoScores:
+        def get_params(self, deep=True):  # чтобы sklearn.clone мог копировать (режим «Библиотека»)
+            return {}
+
         def fit(self, X, y):
             return self
 

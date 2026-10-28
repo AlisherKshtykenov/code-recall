@@ -2,12 +2,9 @@
 
 **Что делает.** Маленькая свёрточная сеть «брак / норма»: несколько conv_block уменьшают картинку и выделяют признаки, flatten разворачивает их в вектор, dropout борется с переобучением, linear выдаёт один логит. Вероятность брака — `sigmoid(логит)`. Это baseline (базовая модель): то, с чем сравнивают всё более сложное.
 
-```
-(N, 1, 64, 64) -conv_block-> (N, 16, 32, 32) -conv_block-> (N, 32, 16, 16) -conv_block-> (N, 64, 8, 8)
-               -flatten-> (N, 4096) -dropout-> -linear-> (N, 1)
-```
+## Как применять
 
-## Как это делают в жизни
+### Как это делают в жизни
 
 ```python
 import torch.nn as nn
@@ -24,7 +21,8 @@ probs = logits.sigmoid()                                        # вероятн
 
 Для настоящих фото чаще берут предобученную сеть (`torchvision.models.resnet18(weights="DEFAULT")`) и меняют последний слой — на карте это `resnet`, `efficientnet`.
 
-## Параметры (наша сеть)
+
+### Параметры (наша сеть)
 
 | Параметр | По умолчанию | Что значит |
 |---|---|---|
@@ -33,21 +31,41 @@ probs = logits.sigmoid()                                        # вероятн
 | `image_size` | `64` | сторона входной картинки — нужна, чтобы посчитать размер linear |
 | `dropout` | `0.5` | вероятность dropout перед linear |
 
-## Подводные камни
+
+### Подводные камни
 
 1. **Один логит, а не два.** Для «брак / норма» хватает одного выхода + `BCEWithLogitsLoss` (`weighted_cross_entropy`). Два выхода + softmax — то же самое, но с лишним параметром.
 2. **Размер linear зависит от картинки.** Сменили 64 → 128 — `features` вырос в 4 раза. Для любого размера ставят `nn.AdaptiveAvgPool2d(1)` перед flatten.
 3. **`model.eval()` перед валидацией** — иначе работает dropout, а batch_norm обновляет статистики на валидации.
 4. **Baseline должен быть простым.** Если сложная модель не обгоняет его заметно — проблема в данных или постановке, а не в архитектуре.
 
-## Где используется на карте
+
+### Где используется на карте
 
 <!-- map:start -->
 - [defect_detection](#/map/baseline_cnn) — базовая модель: с ней сравниваются resnet и efficientnet
 <!-- map:end -->
 
+
+## Как работает
+
+```
+(N, 1, 64, 64) -conv_block-> (N, 16, 32, 32) -conv_block-> (N, 32, 16, 16) -conv_block-> (N, 64, 8, 8)
+               -flatten-> (N, 4096) -dropout-> -linear-> (N, 1)
+```
+
+**Идея.** Несколько conv_block уменьшают картинку и выделяют признаки, последний слой превращает их в один логит.
+
+1. Блоки: 64 → 32 → 16 → 8, каналы растут (16, 32, 64).
+2. flatten: (N, C, h, w) → (N, C·h·w); размер считается заранее по image_size.
+3. dropout (только в обучении) → linear → (N, 1).
+
 ## Задача
 
-Напишите `BaselineCNN(nn.Module)` в `solution.py` на своих кирпичиках: `from bricks.conv_block import ConvBlock`, `bricks.flatten`, `bricks.dropout`, `bricks.linear`.
+**Режим «Библиотека»** — примените `torch.flatten, torch.nn.functional.dropout, torch.nn.functional.linear` с той же сигнатурой, что в «С нуля»: тесты проверяют, что вызвано `flatten`, `dropout`, `linear`; в `dropout(…)` явно передайте `training=`. Это учит, как и где применять.
+
+**Режим «С нуля»** — напишите `BaselineCNN(nn.Module)` в `solution.py` на своих кирпичиках: `from bricks.conv_block import ConvBlock`, `bricks.flatten`, `bricks.dropout`, `bricks.linear`.
 Тесты собирают такую же сеть из nn-слоёв со скопированными весами: логиты, градиенты всех параметров и running-статистики должны совпасть.
 Можно `nn.Module`, `nn.ModuleList`, `nn.Parameter`, `nn.init`. Нельзя nn-слои, `torch.nn.functional`, `torchvision`.
+
+Общие тесты (сравнение с библиотекой на многих случаях) должны пройти оба режима.

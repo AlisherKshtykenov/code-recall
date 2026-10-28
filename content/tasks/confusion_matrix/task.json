@@ -2,13 +2,35 @@
   "title": "confusion_matrix (матрица ошибок)",
   "kind": "ml",
   "topic": "ML/Оценка/Metrics",
-  "tags": ["metrics", "sklearn", "defect_detection"],
+  "tags": [
+    "metrics",
+    "sklearn",
+    "defect_detection"
+  ],
   "implements": "metric",
   "main": "solution.py",
   "timeout": 60,
   "library": "sklearn.metrics.confusion_matrix",
-  "forbidden": {
-    "modules": ["sklearn", "torchmetrics", "scipy", "pandas"],
-    "names": ["confusion_matrix", "multilabel_confusion_matrix", "crosstab", "bincount", "histogram2d"]
+  "forbidden_modules": [
+    "sklearn",
+    "torchmetrics",
+    "scipy",
+    "pandas"
+  ],
+  "forbidden_names": [
+    "confusion_matrix",
+    "multilabel_confusion_matrix",
+    "crosstab",
+    "bincount",
+    "histogram2d"
+  ],
+  "library_function": "sklearn.metrics.confusion_matrix",
+  "required_names": [
+    "confusion_matrix"
+  ],
+  "required_kwargs": {
+    "confusion_matrix": [
+      "labels"
+    ]
   }
 }

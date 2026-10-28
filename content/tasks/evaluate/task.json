@@ -1,8 +1,33 @@
 {
-  "title": "evaluate (оценка модели на валидации)", "kind": "ml", "topic": "ML/Оценка",
-  "tags": ["блок", "torch", "metrics", "defect_detection"], "main": "solution.py", "timeout": 120,
+  "title": "evaluate (оценка модели на валидации)",
+  "kind": "ml",
+  "topic": "ML/Оценка",
+  "tags": [
+    "блок",
+    "torch",
+    "metrics",
+    "defect_detection"
+  ],
+  "main": "solution.py",
+  "timeout": 120,
   "library": "нет: цикл валидации PyTorch + метрики sklearn по склеенным предсказаниям (или torchmetrics)",
-  "deps": [{"name": "sigmoid", "task": "sigmoid"}],
-  "map_notes": {"defect_detection": "recall, f1, pr_auc, confusion_matrix на валидации"},
-  "forbidden": {"modules": ["torchmetrics", "lightning", "pytorch_lightning", "ignite"], "names": ["Trainer", "validate"]}
+  "deps": [
+    {
+      "name": "sigmoid",
+      "task": "sigmoid"
+    }
+  ],
+  "map_notes": {
+    "defect_detection": "recall, f1, pr_auc, confusion_matrix на валидации"
+  },
+  "forbidden_modules": [
+    "torchmetrics",
+    "lightning",
+    "pytorch_lightning",
+    "ignite"
+  ],
+  "forbidden_names": [
+    "Trainer",
+    "validate"
+  ]
 }

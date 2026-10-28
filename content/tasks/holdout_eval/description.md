@@ -2,7 +2,9 @@
 
 **Что делает.** Самый простой честный способ оценить модель: отложить часть данных (holdout, обычно 20%), обучить на остальном и посчитать метрики только на отложенном. Модель этих данных не видела — оценка не завышена.
 
-## Как это делают в жизни
+## Как применять
+
+### Как это делают в жизни
 
 Отдельной функции нет — это три строки sklearn:
 
@@ -16,7 +18,8 @@ pred, prob = model.predict(X_te), model.predict_proba(X_te)[:, 1]
 print(recall_score(y_te, pred), f1_score(y_te, pred), average_precision_score(y_te, prob))
 ```
 
-## Параметры (наша функция)
+
+### Параметры (наша функция)
 
 | Параметр | По умолчанию | Что значит |
 |---|---|---|
@@ -28,20 +31,35 @@ print(recall_score(y_te, pred), f1_score(y_te, pred), average_precision_score(y_
 | `random_state` | `None` | seed разбиения |
 | `stratify` | `True` | сохранять доли классов (через `stratified_split`) |
 
-## Подводные камни
+
+### Подводные камни
 
 1. **Один holdout — одна случайная оценка.** На 200 объектах с 10% брака в тесте всего 4 бракованных: recall прыгает 0 / 0.25 / 0.5 от seed. Повторите с несколькими seed или берите кросс-валидацию.
 2. **Подбор порога и гиперпараметров на том же holdout** — он перестаёт быть честным. Нужно три части: train / validation / test.
 3. **Предобработку — после split.** Scaler, веса классов, отбор признаков учатся только на train.
 4. **Дубликаты и группы.** Почти одинаковые фото по обе стороны split завышают оценку — делите по изделиям.
 
-## Где используется на карте
+
+### Где используется на карте
 
 <!-- map:start -->
 - [defect_detection](#/map/holdout_eval) — одна честная оценка baseline на отложенных 20%
 <!-- map:end -->
 
+
+## Как работает
+
+**Идея.** Отложить часть данных, обучиться на остальном, оценить только на отложенном.
+
+1. Стратифицированно отрезать test (сохраняя долю классов) и запомнить номера объектов test.
+2. Обучить копию модели на train.
+3. Метрики по меткам (`predict`) и по оценкам (`predict_proba` или `decision_function`).
+
 ## Задача
 
-Напишите `holdout_eval(estimator, X, y, metrics, *, score_metrics=None, test_size=0.2, random_state=None, stratify=True)` в `solution.py`; разбиение — свой `from bricks.stratified_split import stratified_split`.
+**Режим «Библиотека»** — примените `sklearn.model_selection.train_test_split + sklearn.base.clone` с той же сигнатурой, что в «С нуля»: тесты проверяют, что вызвано `train_test_split`, `clone`; в `train_test_split(…)` явно передайте `stratify=`, `test_size=`. Это учит, как и где применять.
+
+**Режим «С нуля»** — напишите `holdout_eval(estimator, X, y, metrics, *, score_metrics=None, test_size=0.2, random_state=None, stratify=True)` в `solution.py`; разбиение — свой `from bricks.stratified_split import stratified_split`.
 Аналога в sklearn нет — тесты сравнивают с ручным расчётом на том же разбиении и проверяют поведение (seed, копия модели, decision_function).
+
+Общие тесты (сравнение с библиотекой на многих случаях) должны пройти оба режима.

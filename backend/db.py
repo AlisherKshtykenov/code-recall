@@ -35,6 +35,7 @@ class Task(Base):
     tags = Column(Text, default="[]")  # JSON: свободные теги
     broken = Column(Text, default="")  # «сломано зависимостью»: что упало на эталоне после смены эталона кирпичика
     last_assembly = Column(Text, default="{}")  # JSON: последняя сборка (для «как в прошлый раз»)
+    board = Column(Text, default="")  # JSON: раскладка карточек на холсте конструктора (позиции, свёрнутые блоки)
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
     # FSRS (пересчитывается по истории попыток, см. review.replay)
@@ -92,6 +93,7 @@ class BrickEvent(Base):
     passed = Column(Integer, default=0)
     grade = Column(Integer, default=3)
     code = Column(Text, default="")  # код кирпичика — для «моя последняя версия»
+    mode = Column(String, default="scratch")  # в каком режиме кирпичик написан (повтор засчитывается этому режиму)
     note = Column(Text, default="")  # что упало
 
 
@@ -117,6 +119,19 @@ class MapBrick(Base):
     note = Column(Text, default="")
     related = Column(Text, default="[]")
     topic_id = Column(Integer, ForeignKey("topics.id"), nullable=True)
+
+
+class Schedule(Base):
+    """Расписание FSRS отдельно по каждому режиму задачи: «recall · библиотека» и «recall · с нуля» — две строки."""
+    __tablename__ = "schedules"
+    task_id = Column(Integer, ForeignKey("tasks.id"), primary_key=True)
+    mode = Column(String, primary_key=True)
+    due_at = Column(DateTime, nullable=True)
+    fsrs_s = Column(Float, nullable=True)
+    fsrs_d = Column(Float, nullable=True)
+    last_review = Column(DateTime, nullable=True)
+    reps = Column(Integer, default=0)
+    lapses = Column(Integer, default=0)
 
 
 class TaskVersion(Base):
@@ -154,7 +169,8 @@ class Attempt(Base):
     last_check = Column(Text, default="")  # JSON: результат последнего «Проверить» (виден и у брошенной)
     last_output = Column(Text, default="")  # JSON: вывод последнего «Запустить»
     touched_at = Column(DateTime, nullable=True)  # последняя активность (правка, запуск, таймер)
-    assembly = Column(Text, default="{}")  # JSON {имя зависимости: {source: self|ref|last, impl}} — сборка составной задачи
+    assembly = Column(Text, default="{}")  # JSON {имя зависимости: {source: self_library|self_scratch|ref|last, impl}} — сборка
+    mode = Column(String, default="scratch")  # library — через библиотеку, scratch — с нуля (старые попытки — scratch)
 
     task = relationship("Task", back_populates="attempts")
     reviews = relationship("ReviewSession", back_populates="attempt", order_by="ReviewSession.started_at",

@@ -11,26 +11,37 @@
   "main": "solution.py",
   "timeout": 60,
   "library": "sklearn.metrics.recall_score",
-  "forbidden": {
-    "modules": [
-      "sklearn",
-      "torchmetrics",
-      "scipy"
-    ],
-    "names": [
-      "recall_score",
-      "precision_recall_fscore_support",
-      "multilabel_confusion_matrix",
-      "classification_report"
-    ]
-  },
   "deps": [
     {
       "name": "confusion_matrix",
-      "task": "confusion_matrix"
+      "task": "confusion_matrix",
+      "modes": [
+        "scratch"
+      ]
     }
   ],
   "map_notes": {
     "defect_detection": "главная метрика: пропущенный брак дороже ложной тревоги"
+  },
+  "forbidden_modules": [
+    "sklearn",
+    "torchmetrics",
+    "scipy"
+  ],
+  "forbidden_names": [
+    "recall_score",
+    "precision_recall_fscore_support",
+    "multilabel_confusion_matrix",
+    "classification_report"
+  ],
+  "library_function": "sklearn.metrics.recall_score",
+  "required_names": [
+    "recall_score"
+  ],
+  "required_kwargs": {
+    "recall_score": [
+      "average",
+      "zero_division"
+    ]
   }
 }

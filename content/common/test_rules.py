@@ -1,4 +1,4 @@
-"""Правила задачи (одинаковые для всех задач): эталон пишется своими руками.
+"""Проверки режима «С нуля» (одинаковые для всех задач): эталон пишется своими руками.
 Список запрещённого — в task.json: "forbidden": {"modules": [...], "names": [...]}."""
 import ast
 import json
@@ -6,7 +6,9 @@ from pathlib import Path
 
 META = json.loads(Path("task.json").read_text(encoding="utf-8"))
 MAIN = Path(META.get("main", "solution.py"))
-FORBIDDEN = META.get("forbidden", {})
+# forbidden_modules / forbidden_names (новые поля) или старое "forbidden": {"modules", "names"}
+FORBIDDEN = {"modules": META.get("forbidden_modules", META.get("forbidden", {}).get("modules", [])),
+             "names": META.get("forbidden_names", META.get("forbidden", {}).get("names", []))}
 
 
 def tree():

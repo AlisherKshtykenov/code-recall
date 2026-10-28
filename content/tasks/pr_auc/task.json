@@ -2,14 +2,39 @@
   "title": "pr_auc (average precision, площадь под PR-кривой)",
   "kind": "ml",
   "topic": "ML/Оценка/Metrics",
-  "tags": ["metrics", "sklearn", "defect_detection"],
+  "tags": [
+    "metrics",
+    "sklearn",
+    "defect_detection"
+  ],
   "implements": "metric",
   "main": "solution.py",
   "timeout": 60,
   "library": "sklearn.metrics.average_precision_score",
-  "map_notes": {"defect_detection": "качество ранжирования брака независимо от порога — честнее roc_auc при 10% брака"},
-  "forbidden": {
-    "modules": ["sklearn", "torchmetrics", "scipy"],
-    "names": ["average_precision_score", "precision_recall_curve", "auc", "roc_auc_score", "trapz", "trapezoid", "label_binarize"]
+  "map_notes": {
+    "defect_detection": "качество ранжирования брака независимо от порога — честнее roc_auc при 10% брака"
+  },
+  "forbidden_modules": [
+    "sklearn",
+    "torchmetrics",
+    "scipy"
+  ],
+  "forbidden_names": [
+    "average_precision_score",
+    "precision_recall_curve",
+    "auc",
+    "roc_auc_score",
+    "trapz",
+    "trapezoid",
+    "label_binarize"
+  ],
+  "library_function": "sklearn.metrics.average_precision_score",
+  "required_names": [
+    "average_precision_score"
+  ],
+  "required_kwargs": {
+    "average_precision_score": [
+      "pos_label"
+    ]
   }
 }

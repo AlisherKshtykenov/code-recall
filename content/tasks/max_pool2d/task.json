@@ -1,7 +1,42 @@
 {
-  "title": "max_pool2d (max pooling)", "kind": "ml", "topic": "ML/Нейросети/Layers",
-  "tags": ["layers", "torch", "cnn", "defect_detection"], "main": "solution.py", "timeout": 90, "library": "torch.nn.functional.max_pool2d",
-  "map_notes": {"defect_detection": "конец каждого conv_block: карта признаков вдвое меньше"},
-  "forbidden": {"modules": ["torch.nn", "torch.nn.functional"],
-                "names": ["max_pool2d", "max_pool2d_with_indices", "adaptive_max_pool2d", "max_pool1d", "MaxPool2d", "max_unpool2d", "fold", "nn", "functional"]}
+  "title": "max_pool2d (max pooling)",
+  "kind": "ml",
+  "topic": "ML/Нейросети/Layers",
+  "tags": [
+    "layers",
+    "torch",
+    "cnn",
+    "defect_detection"
+  ],
+  "main": "solution.py",
+  "timeout": 90,
+  "library": "torch.nn.functional.max_pool2d",
+  "map_notes": {
+    "defect_detection": "конец каждого conv_block: карта признаков вдвое меньше"
+  },
+  "forbidden_modules": [
+    "torch.nn",
+    "torch.nn.functional"
+  ],
+  "forbidden_names": [
+    "max_pool2d",
+    "max_pool2d_with_indices",
+    "adaptive_max_pool2d",
+    "max_pool1d",
+    "MaxPool2d",
+    "max_unpool2d",
+    "fold",
+    "nn",
+    "functional"
+  ],
+  "library_function": "torch.nn.functional.max_pool2d",
+  "required_names": [
+    "max_pool2d"
+  ],
+  "required_kwargs": {
+    "max_pool2d": [
+      "stride",
+      "padding"
+    ]
+  }
 }

@@ -14,20 +14,23 @@
   "map_notes": {
     "defect_detection": "в стене «сравнение»: ablation adam против sgd"
   },
-  "forbidden": {
-    "modules": [
-      "torch.optim"
-    ],
-    "names": [
-      "optim",
-      "Optimizer",
-      "Adam",
-      "AdamW",
-      "SGD",
-      "adam",
-      "sgd",
-      "_functional",
-      "_foreach_add_"
-    ]
-  }
+  "forbidden_modules": [
+    "torch.optim"
+  ],
+  "forbidden_names": [
+    "optim",
+    "Optimizer",
+    "Adam",
+    "AdamW",
+    "SGD",
+    "adam",
+    "sgd",
+    "_functional",
+    "_foreach_add_"
+  ],
+  "library_function": "torch.optim.SGD",
+  "required_names": [
+    "SGD"
+  ],
+  "required_kwargs": {}
 }

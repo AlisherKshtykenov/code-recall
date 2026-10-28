@@ -5,7 +5,7 @@ let current = null;  // открытая IDE — закрываем при ух�
 $("#theme").onclick = () => setTheme(theme() === "dark" ? "light" : "dark");
 
 const routes = { today: viewToday, tasks: viewTasks, task: viewTask, attempt: viewAttempt, edit: viewEdit,
-                 journal: viewJournal, review: viewReview, stats: viewStats, settings: viewSettings, assemble: viewAssemble, map: viewMap };
+                 journal: viewJournal, review: viewReview, stats: viewStats, settings: viewSettings, assemble: viewAssemble, map: viewMap, builder: viewBuilder };
 let lastHash = location.hash, skipRoute = false;
 function route() {
   if (skipRoute) { skipRoute = false; return; }
@@ -18,7 +18,7 @@ function route() {
   lastHash = location.hash;
   if (current) { current.dispose(); current = null; }
   const [name, ...args] = location.hash.replace(/^#\/?/, "").split("/");
-  const nav = { task: "tasks", attempt: "journal", edit: "tasks", review: "journal", assemble: "tasks", map: "map" }[name] || name || "today";
+  const nav = { task: "tasks", attempt: "journal", edit: "tasks", review: "journal", assemble: "tasks", map: "map", builder: "tasks" }[name] || name || "today";
   $$(".topbar nav a").forEach(a => a.classList.toggle("active", a.dataset.r === nav));
   document.body.classList.remove("ide-mode");
   view.innerHTML = '<div class="muted spinner">загрузка</div>';
@@ -31,11 +31,12 @@ const STATUS = { solved: ["ok", "✓", "решено"], due: ["warn", "⟳", "п
 const statusCell = s => { const [c, i, t] = STATUS[s] || STATUS.new; return `<span class="status-ico ${c}" title="${t}">${i}</span>`; };
 const kindBadge = k => `<span class="badge ${k}">${KIND[k] || k}</span>`;
 
-async function startAttempt(taskId) {
+async function startAttempt(taskId, mode) {
   try {
     const t = normTask(await api(`/api/tasks/${taskId}`));
-    if (t.deps.length && !t.active_attempt) { location.hash = `#/assemble/${taskId}`; return; }  // составная — сначала сборка
-    const a = await api(`/api/tasks/${taskId}/attempts`, { method: "POST" });
+    mode = mode && t.modes.includes(mode) ? mode : t.default_mode;  // по умолчанию первым — «Библиотека»
+    if (t.deps.length && !t.active_attempt) { location.hash = `#/assemble/${taskId}/${mode}`; return; }  // составная — сначала сборка
+    const a = await api(`/api/tasks/${taskId}/attempts`, { method: "POST", json: { mode } });
     location.hash = `#/attempt/${a.id}`;
   } catch (e) { toast(e.message, true); }
 }
@@ -47,16 +48,16 @@ async function viewToday() {
       <span class="badge ${cls}">${items.length}</span></div>
     ${items.length ? `<div class="scroll-x"><table><tbody>${items.map(r => `<tr class="link" data-id="${r.id}">
       <td style="width:28px">${statusCell(cls === "muted" ? "new" : cls === "ok" ? "solved" : "due")}</td>
-      <td><span class="title">${esc(r.title)}</span><div class="muted small">${esc(r.reason)}</div></td>
+      <td><span class="title">${esc(r.title)}</span> <span class="badge mode-${r.mode}">${esc(r.mode_name || "")}</span><div class="muted small">${esc(r.reason)}</div></td>
       <td>${kindBadge(r.kind)}</td><td class="muted">${esc(r.tag || "")}</td>
       <td class="nowrap muted">${r.due_at || ""}</td>
-      <td class="nowrap" style="text-align:right"><button class="${cls === "muted" ? "" : "primary"} small" data-go="${r.id}">${r.active_attempt ? "продолжить" : "решать"}</button></td>
+      <td class="nowrap" style="text-align:right"><button class="${cls === "muted" ? "" : "primary"} small" data-go="${r.id}" data-mode="${r.mode || ""}">${r.active_attempt ? "продолжить" : "решать"}</button></td>
     </tr>`).join("")}</tbody></table></div>` : `<div class="empty">${empty}</div>`}</div>`;
   const total = t.overdue.length + t.due.length;
   const reviewsCard = t.reviews.length ? `<div class="card"><div class="row" style="margin-bottom:6px"><h2 style="margin:0">Работа над ошибками</h2>
       <span class="badge warn">${t.reviews.length}</span></div><table><tbody>${t.reviews.map(r => `<tr class="link" data-review="${r.id}">
         <td style="width:28px"><span class="status-ico warn">✎</span></td>
-        <td><span class="title">${esc(r.title)}</span><div class="muted small">${esc(r.reason)}</div></td>
+        <td><span class="title">${esc(r.title)}</span> <span class="badge mode-${r.mode}">${esc(r.mode_name || "")}</span><div class="muted small">${esc(r.reason)}</div></td>
         <td>${kindBadge(r.kind)}</td><td class="muted nowrap">${fmtDate(r.started_at)}</td>
         <td style="text-align:right"><button class="primary small">продолжить</button></td></tr>`).join("")}</tbody></table></div>` : "";
   view.innerHTML = `<div class="row" style="margin-bottom:14px"><h1 style="margin:0">Сегодня</h1>
@@ -66,7 +67,7 @@ async function viewToday() {
     ${section(t.due, "На сегодня", "warn", "на сегодня всё повторено")}
     ${section(t.new, "Новые", "muted", 'новых задач нет — <a href="#/tasks">загрузите задачи</a>')}
     ${t.upcoming.length ? section(t.upcoming, "Ближайшие 7 дней", "ok", "") : ""}`;
-  $$("[data-go]").forEach(b => b.onclick = e => { e.stopPropagation(); startAttempt(b.dataset.go); });
+  $$("[data-go]").forEach(b => b.onclick = e => { e.stopPropagation(); startAttempt(b.dataset.go, b.dataset.mode); });
   $$("tr[data-id]").forEach(tr => tr.onclick = () => { location.hash = `#/task/${tr.dataset.id}`; });
   $$("tr[data-review]").forEach(tr => tr.onclick = () => { location.hash = `#/review/${tr.dataset.review}`; });
 }
@@ -117,7 +118,7 @@ async function viewTasks() {
     const plan = lib.status && lib.status !== "planned" || lib.kind || lib.tags.length ? [] : planned.filter(p => (!inTopic || inTopic.has(p.topic_id))
       && (p.name + " " + p.note + " " + arr(p.categories).join(" ")).toLowerCase().includes(lib.q.toLowerCase()));
     $("#rows").innerHTML = rows.map(t => `<tr class="link" data-id="${t.id}" draggable="true" title="перетащите на узел дерева, чтобы перенести">
-      <td style="width:28px">${statusCell(t.status)}</td>
+      <td style="width:56px">${modeHalves(t.statuses)}</td>
       <td><span class="title">${esc(t.title)}</span>${t.active_attempt ? ' <span class="badge warn">в процессе</span>' : ""}
         ${TYPE_BADGE[t.type] ? ` <span class="badge">${TYPE_BADGE[t.type][1]}${t.implements ? ` · ${esc(t.implements)}` : ""}</span>` : ""}
         ${t.broken ? ` <span class="badge err" title="${esc(t.broken)}">сломано зависимостью</span>` : ""}
@@ -148,7 +149,7 @@ async function viewTasks() {
     if (pl) { const p = planned.find(x => x.name === pl.dataset.plan); openChip({ ...p, status: "planned" }); }
   };
   $("#upload").onclick = uploadDialog;
-  $("#new").onclick = () => wizardDialog({ topic_id: lib.topic });
+  $("#new").onclick = () => { location.hash = "#/builder"; };  // конструктор — визуальная доска
 }
 
 // Загрузка: перетащить папку задачи (или несколько) -> предпросмотр -> сохранить
@@ -209,17 +210,26 @@ async function viewTask(id, tab = "about") {
     <div class="row" style="margin-bottom:14px"><h1 style="margin:0">${esc(t.title)}</h1>${kindBadge(t.kind)}
       ${TYPE_BADGE[t.type] ? `<span class="badge">${TYPE_BADGE[t.type][1]}${t.implements ? ` · слот ${esc(t.implements)}` : ""}</span>` : ""}
       ${t.tags.map(g => `<span class="badge">#${esc(g)}</span>`).join("")}
-      ${statusCell(t.status)}<span class="grow"></span>
+      ${modeHalves(t.statuses)}<span class="grow"></span>
       <button class="ghost" id="dup" title="копия задачи со всеми файлами">Дублировать</button>
       <a class="btn" href="#/edit/${t.id}">✎ Редактировать задачу</a>
-      <button class="primary" id="go">${t.active_attempt ? "Продолжить решение" : t.deps.length ? "Собрать и решать" : "Решать"}</button></div>
+      <a class="btn" href="#/builder/${t.id}" title="визуальная доска: зависимости, «Собрать в блок», эталоны обоих режимов">Конструктор</a>
+      ${t.modes.length ? `<div class="seg" id="mode-seg" style="margin:0" title="Библиотека — как и где применять; С нуля — как работает. Засчитываются оба.">
+        ${MODES.map(m => `<button data-mode="${m}" ${t.modes.includes(m) ? "" : 'disabled title="у задачи нет этого режима"'}>${MODE_TITLE[m]}</button>`).join("")}</div>
+      <button class="primary" id="go">${t.deps.length ? "Собрать и начать" : "Начать"}</button>` : '<span class="badge">концепт — только README</span>'}</div>
     ${t.broken ? `<div class="card" style="border-left:3px solid var(--err)"><b class="err">Сломано зависимостью</b> — ${esc(t.broken)}
       <span class="muted small">Тесты задачи упали на эталоне после смены эталона кирпичика; такие тесты не влияют на оценку.</span>
       <button class="small" id="recheck">Перепроверить</button></div>` : ""}
     <div class="tabs">${[["about", "Описание"], ["compose", "Состав"], ["attempts", "Попытки"], ["versions", "Версии"], ["settings", "Настройки"]]
       .map(([k, n]) => `<a href="#/task/${id}/${k}" class="${k === tab ? "active" : ""}">${n}</a>`).join("")}</div>
     <div id="tab"></div>`;
-  $("#go").onclick = () => startAttempt(t.id);
+  let mode = store.get(`mode.${t.id}`, t.default_mode);
+  if (!t.modes.includes(mode)) mode = t.default_mode;
+  const paintMode = () => $$("#mode-seg [data-mode]").forEach(b => b.classList.toggle("sel", b.dataset.mode === mode));
+  $$("#mode-seg [data-mode]").forEach(b => b.onclick = () => { mode = b.dataset.mode; store.set(`mode.${t.id}`, mode); paintMode(); });
+  paintMode();
+  const go = $("#go");
+  if (go) go.onclick = () => startAttempt(t.id, mode);
   $("#dup").onclick = async () => { const r = await api(`/api/tasks/${t.id}/duplicate`, { method: "POST" }); toast("копия создана"); location.hash = `#/task/${r.id}`; };
   const rc = $("#recheck");
   if (rc) rc.onclick = async () => { rc.disabled = true; const { job } = await api(`/api/tasks/${t.id}/recheck`, { method: "POST" }); await followJob(job, () => {}); viewTask(id, tab); };
@@ -329,7 +339,7 @@ async function journalTable(box, opts = {}, filter = "") {
     ${rows.length ? `<div class="scroll-x"><table><thead><tr><th>Дата</th>${opts.task_id ? "" : "<th>Задача</th>"}<th>Тип</th><th>Статус</th><th>Оценка</th><th>Время</th><th>«Проверить»</th><th>Эталон</th><th></th></tr></thead><tbody>
     ${rows.map(r => `<tr class="link" data-open="${r.type === "review" ? `#/review/${r.id}${r.status === "active" ? "" : "/report"}` : `#/attempt/${r.id}`}">
       <td class="nowrap muted">${fmtDate(r.date)}</td>${opts.task_id ? "" : `<td><span class="title">${esc(r.task)}</span></td>`}
-      <td>${r.type === "review" ? `<span class="badge">работа над ошибками</span>${r.status === "active" ? ` <span class="muted small">шаг ${r.step}/3</span>` : ""}` : '<span class="badge">попытка</span>'}</td>
+      <td>${r.mode ? `<span class="badge mode-${r.mode}">${esc(r.mode_name)}</span> ` : ""}${r.type === "review" ? `<span class="badge">работа над ошибками</span>${r.status === "active" ? ` <span class="muted small">шаг ${r.step}/3</span>` : ""}` : '<span class="badge">попытка</span>'}</td>
       <td><span class="badge ${JSTATUS[r.status] || ""}">${esc(r.status_name)}</span>${r.reason ? `<div class="muted small" style="min-width:220px;max-width:380px">${esc(r.reason)}</div>` : ""}</td>
       <td>${r.score ?? '<span class="muted">—</span>'}</td><td class="mono muted">${fmtMs(r.total_ms)}</td>
       <td class="muted">${r.checks}</td><td>${r.ref_opened ? `<span class="warn small">${r.type === "review" ? "подглядывал" : "открывал"}</span>` : '<span class="muted">—</span>'}</td>
@@ -410,7 +420,7 @@ async function viewAttempt(id) {
   ];
 
   current = await openIDE(view, {
-    title: a.title + (readonly ? ` · ${OUTCOME_TITLE[a.outcome] || a.outcome}` : ""), base, readonly, back: `#/task/${a.task_id}`,
+    title: `${a.title} · ${MODE_NAME[a.mode] || a.mode}` + (readonly ? ` · ${OUTCOME_TITLE[a.outcome] || a.outcome}` : ""), base, readonly, back: `#/task/${a.task_id}`,
     roles: a.roles, main: a.main_file, pyFiles: a.files, preload: a.files, expand: [],
     open: readonly ? written : [a.main_file, ...written.filter(f => f !== a.main_file)].filter(Boolean),
     tabNote: p => brickOf[p] ? `<span class="role" title="${esc(brickOf[p].title)}">кирпичик</span>` : "",
@@ -627,7 +637,7 @@ async function viewReview(id, sub) {
   };
   const t0 = Date.now(), started = new Date(r.step_started).getTime();
   current = await openIDE(view, {
-    title: `${r.title} · работа над ошибками`, base, back: `#/attempt/${r.attempt_id}`,
+    title: `${r.title} · ${MODE_NAME[r.mode] || ""} · работа над ошибками`, base, back: `#/attempt/${r.attempt_id}`,
     open: [r.file], preload: r.all_files, pyFiles: r.all_files, expand: [], main: r.file, dataLink: r.data_link,
     tabNote: p => p === r.file ? '<span class="role">переписываю</span>' : '<span class="role">эталон</span>',
     readonlyFile: p => r.all_files.includes(p) && p !== r.file,

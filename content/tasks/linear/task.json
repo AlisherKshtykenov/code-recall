@@ -1,6 +1,34 @@
 {
-  "title": "linear (полносвязный слой, dense)", "kind": "ml", "topic": "ML/Нейросети/Layers",
-  "tags": ["layers", "torch", "defect_detection"], "main": "solution.py", "timeout": 60, "library": "torch.nn.functional.linear",
-  "map_notes": {"defect_detection": "последний слой baseline_cnn: признаки -> 1 логит брака"},
-  "forbidden": {"modules": ["torch.nn", "torch.nn.functional"], "names": ["linear", "Linear", "addmm", "baddbmm", "bilinear", "nn", "functional"]}
+  "title": "linear (полносвязный слой, dense)",
+  "kind": "ml",
+  "topic": "ML/Нейросети/Layers",
+  "tags": [
+    "layers",
+    "torch",
+    "defect_detection"
+  ],
+  "main": "solution.py",
+  "timeout": 60,
+  "library": "torch.nn.functional.linear",
+  "map_notes": {
+    "defect_detection": "последний слой baseline_cnn: признаки -> 1 логит брака"
+  },
+  "forbidden_modules": [
+    "torch.nn",
+    "torch.nn.functional"
+  ],
+  "forbidden_names": [
+    "linear",
+    "Linear",
+    "addmm",
+    "baddbmm",
+    "bilinear",
+    "nn",
+    "functional"
+  ],
+  "library_function": "torch.nn.functional.linear",
+  "required_names": [
+    "linear"
+  ],
+  "required_kwargs": {}
 }

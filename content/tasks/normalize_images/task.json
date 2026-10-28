@@ -2,13 +2,39 @@
   "title": "normalize_images (нормализация картинок)",
   "kind": "ml",
   "topic": "ML/Данные/Preprocessing",
-  "tags": ["preprocessing", "torchvision", "images", "defect_detection"],
+  "tags": [
+    "preprocessing",
+    "torchvision",
+    "images",
+    "defect_detection"
+  ],
   "main": "solution.py",
   "timeout": 60,
   "library": "torchvision.transforms.functional.normalize + mean/std по датасету",
-  "map_notes": {"image_classification": "mean/std ImageNet для предобученных сетей", "defect_detection": "серые 64×64: один канал, mean/std считаем по train"},
-  "forbidden": {
-    "modules": ["torchvision", "sklearn", "kornia", "albumentations"],
-    "names": ["Normalize", "batch_norm", "instance_norm", "layer_norm", "group_norm", "std_mean", "var_mean", "std", "var"]
-  }
+  "map_notes": {
+    "image_classification": "mean/std ImageNet для предобученных сетей",
+    "defect_detection": "серые 64×64: один канал, mean/std считаем по train"
+  },
+  "forbidden_modules": [
+    "torchvision",
+    "sklearn",
+    "kornia",
+    "albumentations"
+  ],
+  "forbidden_names": [
+    "Normalize",
+    "batch_norm",
+    "instance_norm",
+    "layer_norm",
+    "group_norm",
+    "std_mean",
+    "var_mean",
+    "std",
+    "var"
+  ],
+  "library_function": "torchvision.transforms.functional.normalize",
+  "required_names": [
+    "normalize"
+  ],
+  "required_kwargs": {}
 }

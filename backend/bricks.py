@@ -19,7 +19,8 @@ import json
 from . import taskfs
 from .db import Attempt, BrickEvent, Slot, Task
 
-SOURCES = ("self", "ref", "last")
+SOURCES = ("self_library", "self_scratch", "ref", "last")  # пишу сам библиотекой / с нуля, эталон, моя последняя
+SELF_MODE = {"self_library": "library", "self_scratch": "scratch"}
 
 
 class DepError(ValueError):
@@ -30,12 +31,16 @@ def files_of(task: Task) -> dict:
     return json.loads(task.current.files) if task.current else {}
 
 
-def deps_of(files: dict) -> list[dict]:
-    """Зависимости из task.json: [{name, task} | {name, slot}]; name — имя модуля для импорта."""
+def deps_of(files: dict, mode: str | None = None) -> list[dict]:
+    """Зависимости из task.json: [{name, task} | {name, slot}]; name — имя модуля для импорта.
+    "modes": ["scratch"] — зависимость нужна только этому режиму (f1 с нуля считает по моему confusion_matrix,
+    а f1 через sklearn — нет). mode=None — все зависимости (для проверки циклов)."""
     out = []
     deps = taskfs.read_meta(files).get("deps")
     for d in deps if isinstance(deps, list) else []:
         if not isinstance(d, dict) or not (d.get("task") or d.get("slot")):
+            continue
+        if mode and isinstance(d.get("modes"), list) and mode not in d["modes"]:
             continue
         target = d.get("task") or d.get("slot")
         name = taskfs.slug(str(d.get("name") or target)).replace("-", "_").replace(".", "_").lower()
@@ -51,7 +56,7 @@ def implements_of(files: dict) -> str:
 
 def main_module(task: Task, files: dict | None = None) -> str:
     """Файл кирпичика, который становится bricks/<имя>.py: главный файл задачи или единственный в reference/."""
-    ref = taskfs.reference_files(files if files is not None else files_of(task))
+    ref = taskfs.reference_names(files if files is not None else files_of(task))
     if task.main_file in ref:
         return task.main_file
     written = sorted(ref)
@@ -76,14 +81,30 @@ def module_name(task: Task) -> str:
     return taskfs.slug(task.name).replace("-", "_").replace(".", "_").lower()
 
 
-def tree(db, task: Task, assembly: dict | None = None, files: dict | None = None) -> list[dict]:
+def node_mode(assembly: dict, node: dict, db=None) -> str:
+    """В каком режиме подключён кирпичик: «пишу сам» — выбранный режим; эталон — его эталон (с нуля, если есть);
+    «моя последняя» — режим той версии."""
+    src = source_of(assembly, node)
+    if src in SELF_MODE:
+        mode = SELF_MODE[src]
+        return mode if mode in node.get("modes", taskfs.MODES) else node.get("ref_mode", "scratch")
+    if src == "last" and db is not None:
+        lg = last_good(db, db.get(Task, node["task_id"]))
+        if lg:
+            return lg["mode"]
+    return node.get("ref_mode", "scratch")
+
+
+def tree(db, task: Task, assembly: dict | None = None, files: dict | None = None, mode: str | None = None) -> list[dict]:
     """Все зависимости задачи на любой глубине (сначала ближние), с выбранной реализацией слотов.
-    Узел: {name, kind: task|slot, slot, task_id, title, module, depth, parent, impls}."""
+    mode — режим самой задачи: зависимости, нужные только другому режиму, не входят. Каждый кирпичик
+    раскрывается в том режиме, в котором он подключён. Узел: {name, kind, slot, task_id, title, module, depth,
+    parent, impls, modes, ref_mode}."""
     assembly = assembly or {}
     nodes, seen = [], {}
 
-    def walk(t: Task, fl: dict, depth: int, parent: str | None, stack: list):
-        for d in deps_of(fl):
+    def walk(t: Task, fl: dict, m: str | None, depth: int, parent: str | None, stack: list):
+        for d in deps_of(fl, m):
             if d["slot"]:
                 s = db.query(Slot).filter_by(name=d["slot"]).first()
                 options = impls(db, d["slot"])
@@ -110,13 +131,15 @@ def tree(db, task: Task, assembly: dict | None = None, files: dict | None = None
                 if seen[key]["task_id"] != target.id:
                     raise DepError(f"имя «{key}» занято двумя разными кирпичиками: {seen[key]['title']} и {target.title}")
                 continue
+            tf = files_of(target)
             node.update(task_id=target.id, task_name=target.name, title=target.title, module=f"bricks/{mod}.py",
-                        depth=depth, parent=parent, main=main_module(target))
+                        depth=depth, parent=parent, main=main_module(target, tf), modes=taskfs.modes_of(tf), ref_mode=taskfs.ref_mode(tf))
             seen[key] = node
             nodes.append(node)
-            walk(target, files_of(target), depth + 1, key, stack + [target.id])
+            child_mode = node_mode(assembly, node, db) if m is not None else None  # проверка циклов (m=None) — все режимы
+            walk(target, tf, child_mode, depth + 1, key, stack + [target.id])
 
-    walk(task, files if files is not None else files_of(task), 0, None, [task.id])
+    walk(task, files if files is not None else files_of(task), mode, 0, None, [task.id])
     return nodes
 
 
@@ -127,6 +150,8 @@ def check_cycles(db, task: Task, files: dict):
 
 def source_of(assembly: dict, node: dict) -> str:
     s = (assembly.get(node["name"]) or {}).get("source", "ref")
+    if s == "self":  # старые сборки: «пишу сам» = с нуля
+        return "self_scratch"
     return s if s in SOURCES else "ref"
 
 
@@ -140,22 +165,30 @@ def last_good(db, task: Task) -> dict | None:
         if res.get("total") and res.get("passed") == res.get("total"):
             code = json.loads(a.files).get(main)
             if code is not None and (best is None or a.finished_at > best["at"]):
-                best = {"code": code, "at": a.finished_at, "from": f"попытка {a.finished_at:%Y-%m-%d}"}
+                mode = a.mode or "scratch"
+                best = {"code": code, "at": a.finished_at, "mode": mode,
+                        "from": f"попытка {a.finished_at:%Y-%m-%d} · {taskfs.MODE_NAME[mode]}"}
     for e in db.query(BrickEvent).filter_by(task_id=task.id, passed=1).all():
         if best is None or e.at > best["at"]:
             parent = db.get(Task, e.parent_task_id)
-            best = {"code": e.code, "at": e.at, "from": f"в задаче «{parent.title if parent else '?'}» {e.at:%Y-%m-%d}"}
+            mode = e.mode or "scratch"
+            best = {"code": e.code, "at": e.at, "mode": mode,
+                    "from": f"в задаче «{parent.title if parent else '?'}» {e.at:%Y-%m-%d} · {taskfs.MODE_NAME[mode]}"}
     return best
 
 
-def brick_ref(db, node: dict) -> str:
+def brick_ref(db, node: dict, mode: str | None = None) -> str:
+    """Эталон кирпичика в режиме mode (по умолчанию — тот, что подключается скрыто: с нуля, если есть)."""
     t = db.get(Task, node["task_id"])
-    return taskfs.reference_files(files_of(t)).get(node["main"], "")
+    fl = files_of(t)
+    ref = taskfs.reference_files(fl, mode if mode in taskfs.modes_of(fl) else taskfs.ref_mode(fl))
+    return ref.get(node["main"], "")
 
 
-def brick_starter(db, node: dict) -> str:
+def brick_starter(db, node: dict, mode: str = "scratch") -> str:
     t = db.get(Task, node["task_id"])
-    return files_of(t).get(f"starter/{node['main']}", "")
+    fl = files_of(t)
+    return fl.get(f"starter/{mode}/{node['main']}", fl.get(f"starter/{node['main']}", ""))
 
 
 def slot_shim(node: dict) -> str:
@@ -164,18 +197,22 @@ def slot_shim(node: dict) -> str:
             f"from bricks.{mod} import *  # noqa: F401,F403\nfrom bricks.{mod} import {node['symbol']}  # noqa: F401\n")
 
 
+def is_self(assembly: dict, node: dict) -> bool:
+    return source_of(assembly, node) in SELF_MODE
+
+
 def self_paths(nodes: list[dict], assembly: dict) -> list[str]:
-    return [n["module"] for n in nodes if source_of(assembly, n) == "self"]
+    return [n["module"] for n in nodes if is_self(assembly, n)]
 
 
-def assemble(db, task: Task, files: dict, assembly: dict, mine: dict) -> tuple[dict, dict]:
+def assemble(db, task: Task, files: dict, assembly: dict, mine: dict, mode: str | None = None) -> tuple[dict, dict]:
     """(code, lib): code — мои файлы (свои + кирпичики «пишу сам»), lib — скрытое: кирпичики-эталоны,
-    «моя последняя версия», slots/*.py. Для задачи без зависимостей lib пуст (кроме слота, который она реализует)."""
-    nodes = tree(db, task, assembly, files)
+    «моя последняя версия», slots/*.py. mode — режим самой задачи (какие зависимости ей нужны)."""
+    nodes = tree(db, task, assembly, files, mode or taskfs.ref_mode(files))
     code, lib = dict(mine), {}
     for n in nodes:
         src = source_of(assembly, n)
-        if src == "self":
+        if src in SELF_MODE:
             code.setdefault(n["module"], "")
         elif src == "last":
             lg = last_good(db, db.get(Task, n["task_id"]))
@@ -208,32 +245,35 @@ def contract_tests(db, files: dict) -> dict:
     return out
 
 
-def reference_code(db, task: Task, files: dict, assembly: dict) -> dict:
-    """Эталон всего, что можно писать в этой сборке: свои файлы и кирпичики «пишу сам» (bricks/<имя>.py)."""
-    out = dict(taskfs.reference_files(files))
-    for n in tree(db, task, assembly, files):
-        if source_of(assembly, n) == "self":
-            out[n["module"]] = brick_ref(db, n)
+def reference_code(db, task: Task, files: dict, assembly: dict, mode: str | None = None) -> dict:
+    """Эталон всего, что можно писать в этой сборке, — в том же режиме: свои файлы режима mode
+    и кирпичики «пишу сам» (bricks/<имя>.py) — каждый в своём выбранном режиме."""
+    mode = mode or taskfs.ref_mode(files)
+    out = dict(taskfs.reference_files(files, mode))
+    for n in tree(db, task, assembly, files, mode):
+        if is_self(assembly, n):
+            out[n["module"]] = brick_ref(db, n, node_mode(assembly, n))
     return out
 
 
-def written_paths(db, task: Task, files: dict, assembly: dict) -> list[str]:
-    """Что я пишу сам: свои файлы с ролью «пишу сам» + кирпичики «пишу сам»."""
+def written_paths(db, task: Task, files: dict, assembly: dict, mode: str | None = None) -> list[str]:
+    """Что я пишу сам: свои файлы режима с ролью «пишу сам» + кирпичики «пишу сам»."""
+    mode = mode or taskfs.ref_mode(files)
     roles = taskfs.default_roles(files, taskfs.read_meta(files))
-    own = [f for f in sorted(taskfs.reference_files(files)) if roles.get(f) != "given"]
-    return own + self_paths(tree(db, task, assembly, files), assembly)
+    own = [f for f in sorted(taskfs.reference_files(files, mode)) if roles.get(f) != "given"]
+    return own + self_paths(tree(db, task, assembly, files, mode), assembly)
 
 
-def brick_of(db, task: Task, files: dict, assembly: dict) -> dict:
+def brick_of(db, task: Task, files: dict, assembly: dict, mode: str | None = None) -> dict:
     """{путь файла: узел кирпичика} — чтобы в отчётах писать «кирпичик split», а не путь."""
-    return {n["module"]: n for n in tree(db, task, assembly, files)}
+    return {n["module"]: n for n in tree(db, task, assembly, files, mode or taskfs.ref_mode(files))}
 
 
-def deps_key(db, task: Task, files: dict, assembly: dict | None = None) -> str:
+def deps_key(db, task: Task, files: dict, assembly: dict | None = None, mode: str | None = None) -> str:
     """Отпечаток эталонов всех зависимостей — часть ключа кэша тестов на эталоне."""
     h = hashlib.sha1()
     try:
-        for n in tree(db, task, assembly or {}, files):
+        for n in tree(db, task, assembly or {}, files, mode or taskfs.ref_mode(files)):
             t = db.get(Task, n["task_id"])
             h.update(f"{n['name']}={t.name}@{t.current.content_hash};".encode())
         impl = implements_of(files)

@@ -14,20 +14,23 @@
   "map_notes": {
     "defect_detection": "оптимизатор baseline_cnn в стене"
   },
-  "forbidden": {
-    "modules": [
-      "torch.optim"
-    ],
-    "names": [
-      "optim",
-      "Optimizer",
-      "Adam",
-      "AdamW",
-      "SGD",
-      "adam",
-      "sgd",
-      "_functional",
-      "_foreach_add_"
-    ]
-  }
+  "forbidden_modules": [
+    "torch.optim"
+  ],
+  "forbidden_names": [
+    "optim",
+    "Optimizer",
+    "Adam",
+    "AdamW",
+    "SGD",
+    "adam",
+    "sgd",
+    "_functional",
+    "_foreach_add_"
+  ],
+  "library_function": "torch.optim.Adam",
+  "required_names": [
+    "Adam"
+  ],
+  "required_kwargs": {}
 }

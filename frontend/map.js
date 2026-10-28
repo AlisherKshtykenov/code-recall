@@ -16,7 +16,11 @@ async function viewMap(focus) {
   const pct = (a, b) => b ? Math.round(100 * a / b) : 0;
   const chip = name => {
     const b = B[name] || { status: "planned", kind: "brick" }, [cls, tip] = CHIP[b.status] || CHIP.planned;
-    return `<button class="chip ${cls}" data-chip="${esc(name)}" title="${esc(name)} — ${tip}${b.note ? ` · ${esc(b.note)}` : ""} · в ${b.reuse || 0} строках">${esc(name)}</button>`;
+    const st = b.statuses || {};
+    const split = b.task_id && b.kind !== "concept";  // у созданной задачи — две половинки: библиотека | с нуля
+    const halves = split ? MODES.map(m => `${MODE_TITLE[m]}: ${(CHIP[st[m]] || ["", st[m] === "none" ? "нет режима" : "—"])[1].split(" — ")[0]}`).join(" · ") : tip;
+    return `<button class="chip ${split ? "split" : cls}" data-chip="${esc(name)}" ${split ? `style="--l: var(--chip-${st.library || "none"}); --r: var(--chip-${st.scratch || "none"})"` : ""}
+      title="${esc(name)} — ${esc(halves)}${b.note ? ` · ${esc(b.note)}` : ""} · в ${b.reuse || 0} строках">${esc(name)}</button>`;
   };
   const cell = items => {
     const groups = [];
@@ -28,7 +32,7 @@ async function viewMap(focus) {
   };
   const list = Object.values(B).filter(b => b.kind !== "concept");
   view.innerHTML = `<div class="row" style="margin-bottom:12px"><h1 style="margin:0">Карта навыков</h1><span class="grow"></span>
-      <span class="legend">${Object.entries(CHIP).map(([k, [c, t]]) => `<span class="chip ${c}" title="${t}">${{ planned: "запланировано", new: "новая", learned: "выучено", due: "повторить", weak: "слабо", concept: "концепт" }[k]}</span>`).join("")}</span></div>
+      <span class="legend"><span class="chip split" style="--l: var(--chip-learned); --r: var(--chip-new)" title="слева — «Библиотека», справа — «С нуля»">библиотека | с нуля</span>${Object.entries(CHIP).map(([k, [c, t]]) => `<span class="chip ${c}" title="${t}">${{ planned: "запланировано", new: "новая", learned: "выучено", due: "повторить", weak: "слабо", concept: "концепт" }[k]}</span>`).join("")}</span></div>
     <div class="tiles">
       <div class="tile"><div class="label">Кирпичиков на карте</div><div class="num">${cov.total}</div><div class="muted small">+ концептов: ${cov.concepts}</div></div>
       <div class="tile"><div class="label">Создано задач</div><div class="num">${cov.created}</div><div class="bar"><i style="width:${pct(cov.created, cov.total)}%"></i></div><div class="muted small">${pct(cov.created, cov.total)}%</div></div>

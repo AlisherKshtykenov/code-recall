@@ -2,9 +2,9 @@
 
 **Что делает.** Каждый выход — взвешенная сумма всех входов плюс сдвиг. «Dense» (плотный) — каждый выход связан с каждым входом. Последний слой почти любой сети: признаки → оценки классов.
 
-$$y = x W^\top + b$$
+## Как применять
 
-## Как это делают в жизни
+### Как это делают в жизни
 
 ```python
 import torch
@@ -16,7 +16,8 @@ logit = layer(features)                              # (batch, 128) -> (batch, 1
 F.linear(features, layer.weight, layer.bias)         # то же функцией
 ```
 
-## Параметры `torch.nn.functional.linear`
+
+### Параметры `torch.nn.functional.linear`
 
 | Параметр | По умолчанию | Что значит |
 |---|---|---|
@@ -26,14 +27,16 @@ F.linear(features, layer.weight, layer.bias)         # то же функцие�
 
 У слоя `nn.Linear(in_features, out_features, bias=True)` веса по умолчанию инициализируются равномерно в ±1/√in_features.
 
-## Подводные камни
+
+### Подводные камни
 
 1. **`W` транспонирована.** Веса хранятся как `(out, in)`, поэтому `x @ W.T`, а не `x @ W`. Перепутанная форма даёт ошибку «mat1 and mat2 shapes cannot be multiplied».
 2. **Перед linear после свёрток нужен flatten:** `(batch, C, H, W)` → `(batch, C·H·W)`; `in_features` должен совпасть с `C·H·W`.
 3. **Работает по последней оси:** вход `(batch, time, features)` даёт `(batch, time, out)` — это не ошибка, а broadcast.
 4. **Bias и BatchNorm.** Перед `batch_norm` bias бесполезен (среднее вычитается) — ставят `bias=False`.
 
-## Где используется на карте
+
+### Где используется на карте
 
 <!-- map:start -->
 - [regression](#/map/linear)
@@ -44,7 +47,23 @@ F.linear(features, layer.weight, layer.bias)         # то же функцие�
 - [defect_detection](#/map/linear) — последний слой baseline_cnn: признаки -> 1 логит брака
 <!-- map:end -->
 
+
+## Как работает
+
+$$y = x W^\top + b$$
+
+**Идея.** Каждый выход — взвешенная сумма всех входов плюс сдвиг.
+
+$$y = x W^\top + b$$
+
+1. Умножить вход на транспонированную матрицу весов (`matmul` работает по последней оси).
+2. Прибавить bias (broadcast по всем остальным осям).
+
 ## Задача
 
-Напишите `linear(input, weight, bias=None)` своими руками в `solution.py`: выход и градиенты по input, weight, bias как у `F.linear`.
+**Режим «Библиотека»** — примените `torch.nn.functional.linear` с той же сигнатурой, что в «С нуля»: тесты проверяют, что вызвано `linear`. Это учит, как и где применять.
+
+**Режим «С нуля»** — напишите `linear(input, weight, bias=None)` своими руками в `solution.py`: выход и градиенты по input, weight, bias как у `F.linear`.
 Можно `torch.matmul`, `.t()`, сложение. Нельзя `torch.nn`, `addmm`, `bilinear`.
+
+Общие тесты (сравнение с библиотекой на многих случаях) должны пройти оба режима.

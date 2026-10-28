@@ -183,7 +183,7 @@ def upload_slot(db, folder: str, text: dict) -> dict:
         return {"folder": folder, "status": "error", "error": f"slot.json: {e}"}
     s = save_slot(db, SlotIn(name=meta.get("name") or folder, symbol=meta.get("symbol", ""), title=meta.get("title", ""),
                              signature=meta.get("signature", ""), description=meta.get("description") or text.get("description.md", ""),
-                             tests=taskfs.test_files(text), default_impl=meta.get("default", "")))
+                             tests=taskfs.all_test_files(text), default_impl=meta.get("default", "")))
     return {"folder": folder, "status": "slot", "slot": s.name, "tests": len(json.loads(s.tests or "{}"))}
 
 
@@ -206,7 +206,7 @@ def graph(tid: int, db=Depends(get_db)):
         raise HTTPException(404, "задача не найдена")
     asm = json.loads(t.last_assembly or "{}")
     try:
-        down = bricks.tree(db, t, asm)
+        down = bricks.tree(db, t, asm, None, taskfs.ref_mode(json.loads(t.current.files)))
         err = ""
     except bricks.DepError as e:
         down, err = [], str(e)
@@ -231,27 +231,33 @@ def graph(tid: int, db=Depends(get_db)):
 # ---------- экран сборки ----------
 
 @router.get("/tasks/{tid}/assembly")
-def assembly_options(tid: int, asm: str = "", db=Depends(get_db)):
-    """Для каждой зависимости — варианты: пишу сам / эталон / моя последняя версия; у слота — реализации.
-    asm — текущий выбор на экране (JSON): при смене реализации слота меняется и её поддерево."""
+def assembly_options(tid: int, asm: str = "", mode: str = "", db=Depends(get_db)):
+    """Для каждой зависимости — варианты: пишу сам библиотекой / пишу сам с нуля / эталон / моя последняя версия;
+    у слота — реализации. asm — текущий выбор (JSON): при смене реализации или режима меняется и поддерево.
+    mode — режим самой задачи (какие зависимости ей нужны)."""
     t = db.get(Task, tid)
     if t is None:
         raise HTTPException(404, "задача не найдена")
+    files = json.loads(t.current.files)
+    mode = mode if mode in taskfs.modes_of(files) else taskfs.default_mode(files)
     last = json.loads(t.last_assembly or "{}")
     try:
         chosen = json.loads(asm) if asm else last
     except ValueError:
         chosen = last
     try:
-        nodes = bricks.tree(db, t, chosen)
+        nodes = bricks.tree(db, t, chosen, files, mode)
     except bricks.DepError as e:
         raise HTTPException(400, str(e))
+    from .mapview import brick_status
     out = []
     for n in nodes:
-        lg = bricks.last_good(db, db.get(Task, n["task_id"]))
-        out.append({**n, "source": bricks.source_of(chosen, n), "last": {"from": lg["from"]} if lg else None,
-                    "status": node_status(db, db.get(Task, n["task_id"]))})
-    return {"nodes": out, "last": last, "has_last": bool(last)}
+        bt = db.get(Task, n["task_id"])
+        lg = bricks.last_good(db, bt)
+        out.append({**n, "source": bricks.source_of(chosen, n), "node_mode": bricks.node_mode(chosen, n, db),
+                    "last": {"from": lg["from"], "mode": lg["mode"]} if lg else None,
+                    "status": node_status(db, bt), "statuses": brick_status(db, bt, "brick")[1]})
+    return {"nodes": out, "last": last, "has_last": bool(last), "mode": mode, "modes": taskfs.modes_of(files)}
 
 
 # ---------- «сломано зависимостью» ----------
@@ -278,12 +284,14 @@ def recheck_dependents(tid: int):
                 continue
             version = t.current
         job = runner.new_job("recheck")
-        try:
-            res = checking.reference_results(t, version, py, job)
-        except Exception as e:
-            res = {"fatal": str(e)}
-        bad = [r["name"] for r in (res.get("tests") or {}).values() if r["status"] in ("fail", "error")]
-        bad += [e["file"] for e in res.get("collection_errors", [])]
+        bad, res = [], {}
+        for m in taskfs.modes_of(json.loads(version.files)):  # каждый режим — на своём эталоне
+            try:
+                res = checking.reference_results(t, version, py, job, mode=m)
+            except Exception as e:
+                res = {"fatal": str(e)}
+            bad += [f"{r['name']} ({taskfs.MODE_NAME[m]})" for r in (res.get("tests") or {}).values() if r["status"] in ("fail", "error")]
+            bad += [e["file"] for e in res.get("collection_errors", [])]
         with SessionLocal() as db:
             t = db.get(Task, xid)
             t.broken = (f"{label} — упали: {', '.join(bad[:5])}" if bad else f"{label} — {res['fatal'][:200]}" if res.get("fatal") else "")
@@ -301,8 +309,10 @@ def recheck(tid: int, db=Depends(get_db)):
 
     def go():
         py = taskfs.resolve_python(t.python)
-        res = checking.reference_results(t, t.current, py, job, force=True)
-        bad = [r["name"] for r in (res.get("tests") or {}).values() if r["status"] in ("fail", "error")]
+        bad, res = [], {}
+        for m in taskfs.modes_of(json.loads(t.current.files)):
+            res = checking.reference_results(t, t.current, py, job, force=True, mode=m)
+            bad += [f"{r['name']} ({taskfs.MODE_NAME[m]})" for r in (res.get("tests") or {}).values() if r["status"] in ("fail", "error")]
         with SessionLocal() as db2:
             tt = db2.get(Task, tid)
             if bricks.deps_of(json.loads(tt.current.files)):
@@ -323,7 +333,7 @@ def check_slots(aid: int, db=Depends(get_db)):
         raise HTTPException(404, "попытка не найдена")
     asm = json.loads(a.assembly or "{}")
     v = db.get(TaskVersion, a.version_id)
-    nodes = [n for n in bricks.tree(db, a.task, asm, json.loads(v.files)) if n["kind"] == "slot"]
+    nodes = [n for n in bricks.tree(db, a.task, asm, json.loads(v.files), a.mode or "scratch") if n["kind"] == "slot"]
     if not nodes:
         raise HTTPException(400, "в этой задаче нет слотов")
     job = runner.new_job("check")
@@ -339,7 +349,7 @@ def check_slots(aid: int, db=Depends(get_db)):
                                         "source": (asm.get(n["name"]) or {}).get("source", "ref")}}
             job.note(f"\n### слот {n['slot']} → {impl['title']}\n", "stdout")
             try:
-                res = checking.run_tests(task, v, code, py, job, trial)
+                res = checking.run_tests(task, v, code, py, job, trial, a.mode or "scratch")
             except Exception as e:
                 res = {"fatal": str(e), "passed": 0, "total": 0}
             rows.append({"slot": n["slot"], "dep": n["name"], "impl": impl["name"], "title": impl["title"],
@@ -408,7 +418,7 @@ def make_task(db, title: str, files: dict, topic_id=None, tags=(), kind="algo") 
 def wizard(body: WizardIn, db=Depends(get_db)):
     """Мастер: название, узел, теги → тип → файлы → зависимости → (дальше «проверить эталон» в редакторе)."""
     files = dict(body.files)
-    if not taskfs.reference_files(files):
+    if not taskfs.modes_of(files):
         raise HTTPException(400, "нужен хотя бы один файл эталона (reference/*.py)")
     if body.type == "slot" and not body.implements:
         raise HTTPException(400, "укажите слот, который реализует задача")
@@ -522,6 +532,6 @@ def extract(tid: int, body: ExtractIn, db=Depends(get_db)):
         raise HTTPException(400, err)
     taskfs.materialize(t.name, files)
     roles = json.loads(t.current.roles or "{}")
-    commit_version(db, t, files, {f: roles.get(f, "write") for f in taskfs.reference_files(files)})
+    commit_version(db, t, files, {f: roles.get(f, "write") for f in taskfs.reference_names(files)})
     db.commit()
     return {"brick_id": b.id, "dep": dep, "slot": slot_name, "import": imp.strip(), "task": task_short(t)}

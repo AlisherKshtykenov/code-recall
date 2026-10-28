@@ -36,7 +36,7 @@ def commit_version(db, task: Task, files: dict, roles: dict | None = None) -> st
     """Новая версия, если текст файлов или роли изменились. Возвращает created | new_version | unchanged."""
     if roles is None:
         roles = taskfs.default_roles(files, taskfs.read_meta(files))
-    roles = {f: r for f, r in roles.items() if f in taskfs.reference_files(files)}
+    roles = {f: r for f, r in roles.items() if f in taskfs.reference_names(files)}
     h = taskfs.files_hash(files, roles)
     cur = task.current
     if cur and cur.content_hash == h:
@@ -201,16 +201,16 @@ async def upload_preview(request: Request, db=Depends(get_db)):
         text = g["text"]
         item = {"folder": folder, "name": name, "data_files": len(g["data"]), "skipped": g["skipped"][:20]}
         if "slot.json" in text:
-            res.append({**item, "status": "slot", "tests": len(taskfs.test_files(text))})
+            res.append({**item, "status": "slot", "tests": len(taskfs.all_test_files(text))})
             continue
-        if not taskfs.reference_files(text):
+        if not taskfs.modes_of(text):
             res.append({**item, "status": "error", "error": "нет reference/*.py — эталона"})
             continue
         task = db.query(Task).filter_by(name=name).first()
         meta = taskfs.read_meta(text)
         roles = taskfs.default_roles(text, meta)
         if task is None:
-            res.append({**item, "status": "new", "files": sorted(text), "tests": len(taskfs.test_files(text))})
+            res.append({**item, "status": "new", "files": sorted(text), "tests": len(taskfs.all_test_files(text)), "modes": taskfs.modes_of(text)})
             continue
         cur = json.loads(task.current.files)
         if taskfs.files_hash(text, roles) == task.current.content_hash:
@@ -236,7 +236,7 @@ async def upload(request: Request, db=Depends(get_db)):
             from . import library
             results.append(library.upload_slot(db, folder, text))
             continue
-        if not taskfs.reference_files(text):
+        if not taskfs.modes_of(text):
             results.append({"folder": folder, "status": "error", "error": "нет reference/*.py"})
             continue
         meta = taskfs.read_meta(text)
@@ -309,6 +309,15 @@ def create_task(body: NewTask, db=Depends(get_db)):
 
 # ---------- список и карточка ----------
 
+def mode_statuses(t: Task, files: dict) -> dict:
+    """Статус каждого режима: none — режима нет у задачи; new / due / solved — по его расписанию."""
+    from .db import SessionLocal as _S
+    modes = taskfs.modes_of(files)
+    with _S() as db:
+        sched = review.schedules(db, t)
+    return {m: (review.mode_status(sched.get(m)) if m in modes else "none") for m in taskfs.MODES}
+
+
 def task_short(t: Task) -> dict:
     done = [a for a in t.attempts if a.status == "submitted"]
     scores = [a.score for a in done if a.score is not None]
@@ -316,12 +325,13 @@ def task_short(t: Task) -> dict:
     files = json.loads(v.files) if v else {}
     return {"id": t.id, "name": t.name, "title": t.title, "kind": t.kind, "tag": t.tag,
             "difficulty": t.difficulty, "version": v.number if v else 0,
-            "files": len(taskfs.reference_files(files)), "tests": len(taskfs.test_files(files)),
+            "files": len(taskfs.reference_names(files)), "tests": len(taskfs.all_test_files(files)), "modes": taskfs.modes_of(files),
             "attempts": len(done), "best_score": max(scores, default=None),
             "best_time_ms": min((a.total_ms for a in done), default=None),
             "last_attempt": iso(max((a.finished_at for a in done), default=None)),
             "active_attempt": next((a.id for a in reversed(t.attempts) if a.status == "active"), None),
             "due_at": iso(t.due_at), "status": review.task_status(t), "updated_at": iso(t.updated_at),
+            "statuses": mode_statuses(t, files),  # {library: new|due|solved|none, scratch: …}
             "topic_id": t.topic_id, "tags": taskfs.json_list(t.tags), "broken": t.broken or "",
             "implements": bricks.implements_of(files), "deps": bricks.deps_of(files) or [],
             "type": "composite" if bricks.deps_of(files) else "slot" if bricks.implements_of(files) else "plain"}
@@ -343,8 +353,8 @@ def get_task(tid: int, db=Depends(get_db)):
         py = f"ошибка: {e}"
     return {**task_short(t), "notes": t.notes, "python": t.python, "python_resolved": py, "timeout": t.timeout,
             "main_file": t.main_file, "description": files.get("description.md", ""),
-            "reference": sorted(taskfs.reference_files(files)), "roles": json.loads(v.roles or "{}"),
-            "test_files": sorted(taskfs.test_files(files)), "versions": [version_out(x) for x in t.versions],
+            "reference": taskfs.reference_names(files), "roles": json.loads(v.roles or "{}"),
+            "test_files": sorted(taskfs.all_test_files(files)), "default_mode": taskfs.default_mode(files), "versions": [version_out(x) for x in t.versions],
             "data_link": taskfs.data_link(t.name), "path": str(taskfs.task_dir(t.name)),
             "dirty": taskfs.files_hash(taskfs.snapshot(t.name), json.loads(v.roles or "{}")) != v.content_hash}
 
@@ -410,7 +420,7 @@ def set_roles(tid: int, body: RolesIn, db=Depends(get_db)):
     """Роли файлов эталона: write — пишу сам, given — дан как есть. Сохраняется новой версией."""
     t = or_404(db.get(Task, tid))
     files = json.loads(t.current.files)
-    roles = {f: ("given" if body.roles.get(f) == "given" else "write") for f in taskfs.reference_files(files)}
+    roles = {f: ("given" if body.roles.get(f) == "given" else "write") for f in taskfs.reference_names(files)}
     meta = taskfs.read_meta(files)
     meta["roles"] = {f: r for f, r in roles.items() if r == "given"}
     files["task.json"] = json.dumps(meta, ensure_ascii=False, indent=2) + "\n"
@@ -425,15 +435,15 @@ def save_version(tid: int, db=Depends(get_db)):
     """Снимок папки задачи (после правок в редакторе) -> новая версия, если что-то поменялось."""
     t = or_404(db.get(Task, tid))
     files = taskfs.snapshot(t.name)
-    if not taskfs.reference_files(files):
-        raise HTTPException(400, "в reference/ нет ни одного .py")
+    if not taskfs.modes_of(files):
+        raise HTTPException(400, "в reference/ нет ни одного .py (ни reference/library/, ни reference/scratch/)")
     err = deps_ok(db, t, files)
     if err:
         raise HTTPException(400, err)
     apply_meta(t, taskfs.read_meta(files))
     place(db, t, taskfs.read_meta(files))
     roles = json.loads(t.current.roles or "{}")
-    roles = {f: roles.get(f, "write") for f in taskfs.reference_files(files)}
+    roles = {f: roles.get(f, "write") for f in taskfs.reference_names(files)}
     status = commit_version(db, t, files, roles)
     db.commit()
     if status == "new_version":

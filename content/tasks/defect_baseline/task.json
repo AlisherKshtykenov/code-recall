@@ -1,13 +1,77 @@
 {
-  "title": "Детекция дефектов: baseline CNN", "kind": "ml", "topic": "ML/Проекты/defect_detection",
-  "tags": ["стена", "torch", "cnn", "defect_detection"], "main": "pipeline.py", "timeout": 600,
+  "title": "Детекция дефектов: baseline CNN",
+  "kind": "ml",
+  "topic": "ML/Проекты/defect_detection",
+  "tags": [
+    "стена",
+    "torch",
+    "cnn",
+    "defect_detection"
+  ],
+  "main": "pipeline.py",
+  "timeout": 600,
   "library": "нет: цепочка из кирпичиков",
-  "deps": [{"name": "normalize_images", "task": "normalize_images"}, {"name": "stratified_split", "task": "stratified_split"},
-           {"name": "class_weights", "task": "class_weights"}, {"name": "baseline_cnn", "task": "baseline_cnn"},
-           {"name": "train_one_epoch", "task": "train_one_epoch"}, {"name": "evaluate", "task": "evaluate"},
-           {"name": "weighted_cross_entropy", "task": "weighted_cross_entropy"}, {"name": "optimizer", "slot": "optimizer"},
-           {"name": "recall", "task": "recall"}, {"name": "f1", "task": "f1"}, {"name": "pr_auc", "task": "pr_auc"},
-           {"name": "confusion_matrix", "task": "confusion_matrix"}],
-  "map_notes": {"defect_detection": "стена: вся цепочка от картинок до метрик"},
-  "forbidden": {"modules": ["sklearn", "torch.nn.functional", "torchvision"], "names": ["Conv2d", "Linear", "BCEWithLogitsLoss"]}
+  "deps": [
+    {
+      "name": "normalize_images",
+      "task": "normalize_images"
+    },
+    {
+      "name": "stratified_split",
+      "task": "stratified_split"
+    },
+    {
+      "name": "class_weights",
+      "task": "class_weights"
+    },
+    {
+      "name": "baseline_cnn",
+      "task": "baseline_cnn"
+    },
+    {
+      "name": "train_one_epoch",
+      "task": "train_one_epoch"
+    },
+    {
+      "name": "evaluate",
+      "task": "evaluate"
+    },
+    {
+      "name": "weighted_cross_entropy",
+      "task": "weighted_cross_entropy"
+    },
+    {
+      "name": "optimizer",
+      "slot": "optimizer"
+    },
+    {
+      "name": "recall",
+      "task": "recall"
+    },
+    {
+      "name": "f1",
+      "task": "f1"
+    },
+    {
+      "name": "pr_auc",
+      "task": "pr_auc"
+    },
+    {
+      "name": "confusion_matrix",
+      "task": "confusion_matrix"
+    }
+  ],
+  "map_notes": {
+    "defect_detection": "стена: вся цепочка от картинок до метрик"
+  },
+  "forbidden_modules": [
+    "sklearn",
+    "torch.nn.functional",
+    "torchvision"
+  ],
+  "forbidden_names": [
+    "Conv2d",
+    "Linear",
+    "BCEWithLogitsLoss"
+  ]
 }

@@ -31,36 +31,39 @@ def score_settings(db) -> dict:
 
 # ---------- прогоны ----------
 
-def ref_key(version: TaskVersion, python: str, deps: str = "") -> str:
-    return hashlib.sha1(f"{python}\0{version.content_hash}\0{deps}".encode()).hexdigest()[:16]
+def ref_key(version: TaskVersion, python: str, deps: str = "", mode: str = "") -> str:
+    return hashlib.sha1(f"{python}\0{version.content_hash}\0{deps}\0{mode}".encode()).hexdigest()[:16]
 
 
-def suite(db, task: Task, files: dict, assembly: dict, mine: dict) -> tuple[dict, dict]:
-    """(код для прогона, тесты): мои файлы + кирпичики (bricks/, slots/) + тесты задачи и контрактные тесты слота."""
-    code, lib = bricks.assemble(db, task, files, assembly, mine)
-    # task.json — в папку прогона: тест-запрет читает из него список запрещённых имён ("forbidden")
+def suite(db, task: Task, files: dict, assembly: dict, mine: dict, mode: str | None = None) -> tuple[dict, dict]:
+    """(код для прогона, тесты) режима mode: мои файлы + кирпичики (bricks/, slots/) + общие тесты задачи,
+    тесты режима (tests/<mode>/) и контрактные тесты слота."""
+    mode = mode or taskfs.ref_mode(files)
+    code, lib = bricks.assemble(db, task, files, assembly, mine, mode)
+    # task.json — в папку прогона: проверки режима читают из него required_names / forbidden_names
     meta = {"task.json": files["task.json"]} if "task.json" in files else {}
-    return {**lib, **code}, {**taskfs.test_files(files), **bricks.contract_tests(db, files), **meta}
+    return {**lib, **code}, {**taskfs.test_files(files, mode), **bricks.contract_tests(db, files), **meta}
 
 
-def reference_results(task: Task, version: TaskVersion, python: str, job=None, force=False) -> dict:
-    """Тесты на эталоне (все зависимости — эталоны) — из кэша версии или свежий прогон.
-    Ключ кэша учитывает эталоны зависимостей: поменялся эталон кирпичика — тесты перепрогоняются."""
+def reference_results(task: Task, version: TaskVersion, python: str, job=None, force=False, mode: str | None = None) -> dict:
+    """Тесты режима на эталоне этого же режима (все зависимости — эталоны) — из кэша версии или свежий прогон.
+    Ключ кэша учитывает режим и эталоны зависимостей: поменялся эталон кирпичика — тесты перепрогоняются."""
     files = json.loads(version.files)
+    mode = mode or taskfs.ref_mode(files)
     with SessionLocal() as db:
         t = db.get(Task, task.id)
         try:
-            code, tests = suite(db, t, files, {}, taskfs.reference_files(files))
+            code, tests = suite(db, t, files, {}, taskfs.reference_files(files, mode), mode)
         except bricks.DepError as e:
             return {"fatal": f"сборка не удалась: {e}", "tests": {}, "collection_errors": [], "ms": 0}
-        key = ref_key(version, python, bricks.deps_key(db, t, files))
+        key = ref_key(version, python, bricks.deps_key(db, t, files, None, mode), mode)
     cached = json.loads(version.ref_results or "{}")
     if not force and key in cached:
         if job:
-            job.note("эталон: результаты тестов из кэша (версия, зависимости и окружение не менялись)\n", "stdout")
+            job.note(f"эталон ({taskfs.MODE_NAME[mode]}): результаты тестов из кэша (версия, зависимости и окружение не менялись)\n", "stdout")
         return cached[key]
     if job:
-        job.note("=== тесты на эталоне ===\n", "stdout")
+        job.note(f"=== тесты на эталоне · {taskfs.MODE_NAME[mode]} ===\n", "stdout")
     d = taskfs.run_dir(task.name, code, tests)
     try:
         res = runner.run_pytest(python, d, task.timeout, job)
@@ -70,7 +73,9 @@ def reference_results(task: Task, version: TaskVersion, python: str, job=None, f
     if not res.get("fatal") and not res.get("timeout"):
         with SessionLocal() as db:
             v = db.get(TaskVersion, version.id)
-            v.ref_results = json.dumps({key: res}, ensure_ascii=False)  # храним только последнее окружение
+            cache = json.loads(v.ref_results or "{}")
+            keep = {k: r for k, r in cache.items() if r.get("_mode") not in (None, mode)}  # кэш другого режима не трогаем
+            v.ref_results = json.dumps({**keep, key: {**res, "_mode": mode}}, ensure_ascii=False)  # по ключу на режим
             db.commit()
     return res
 
@@ -101,12 +106,13 @@ def compare(ref: dict, mine: dict) -> list[dict]:
     return out
 
 
-def _run_one(task: Task, version: TaskVersion, code: dict, tests: dict, python: str, job, broken_note: str = "") -> dict:
-    ref = reference_results(task, version, python, job)
+def _run_one(task: Task, version: TaskVersion, code: dict, tests: dict, python: str, job, broken_note: str = "",
+             mode: str | None = None) -> dict:
+    ref = reference_results(task, version, python, job, mode=mode)
     if ref.get("fatal"):
         job.note(f"\n{ref['fatal']}\n")
         return {"fatal": ref["fatal"], "tests": []}
-    job.note(f"\n=== тесты на вашем коде: {task.title} ===\n", "stdout")
+    job.note(f"\n=== тесты на вашем коде: {task.title}{f' · {taskfs.MODE_NAME[mode]}' if mode else ''} ===\n", "stdout")
     d = taskfs.run_dir(task.name, code, tests)
     try:
         mine = runner.run_pytest(python, d, task.timeout, job)
@@ -120,54 +126,57 @@ def _run_one(task: Task, version: TaskVersion, code: dict, tests: dict, python: 
     return {"tests": out, "fatal": mine.get("fatal"), "timeout": mine.get("timeout"), "ms": mine["ms"]}
 
 
-def run_tests(task: Task, version: TaskVersion, code: dict, python: str, job, assembly: dict | None = None) -> dict:
-    """Проверка с учётом кирпичиков: сначала собственные тесты кирпичиков «пишу сам» (глубокие первыми),
-    потом тесты задачи на собранном коде. Итог по каждому тесту; у тестов кирпичика — поле brick."""
+def run_tests(task: Task, version: TaskVersion, code: dict, python: str, job, assembly: dict | None = None,
+              mode: str | None = None) -> dict:
+    """Проверка в режиме mode с учётом кирпичиков: сначала собственные тесты кирпичиков «пишу сам» — каждый
+    в своём режиме (глубокие первыми), потом тесты задачи на собранном коде. У тестов кирпичика — поле brick."""
     assembly = assembly or {}
     files = json.loads(version.files)
+    mode = mode or taskfs.ref_mode(files)
     all_tests, fatal, timeout, ms, summary = [], None, None, 0, []
     with SessionLocal() as db:
         t = db.get(Task, task.id)
         try:
-            nodes = bricks.tree(db, t, assembly, files)
-            merged, tests = suite(db, t, files, assembly, code)
+            nodes = bricks.tree(db, t, assembly, files, mode)
+            merged, tests = suite(db, t, files, assembly, code, mode)
         except bricks.DepError as e:
             return {"fatal": f"сборка не удалась: {e}", "tests": [], "passed": 0, "total": 0, "broken": 0}
-        own = []  # кирпичики «пишу сам»: их собственные тесты на моём коде кирпичика
-        for n in sorted((n for n in nodes if bricks.source_of(assembly, n) == "self"), key=lambda n: -n["depth"]):
+        own = []  # кирпичики «пишу сам»: их собственные тесты (в выбранном режиме) на моём коде кирпичика
+        for n in sorted((n for n in nodes if bricks.is_self(assembly, n)), key=lambda n: -n["depth"]):
             bt = db.get(Task, n["task_id"])
             bfiles = json.loads(bt.current.files)
+            bmode = bricks.node_mode(assembly, n)
             bmine = {n["main"]: merged.get(n["module"], ""), **{p: c for p, c in code.items() if p.startswith("bricks/")}}
             try:
-                bcode, btests = suite(db, bt, bfiles, assembly, bmine)
+                bcode, btests = suite(db, bt, bfiles, assembly, bmine, bmode)
             except bricks.DepError as e:
-                own.append((n, None, None, None, str(e)))
+                own.append((n, None, None, None, str(e), bmode))
                 continue
-            own.append((n, bt, bt.current, (bcode, btests), ""))
+            own.append((n, bt, bt.current, (bcode, btests), "", bmode))
         broken_note = f"сломано зависимостью: {t.broken}" if t.broken else ""
-    for n, bt, bv, pack, err in own:
+    for n, bt, bv, pack, err, bmode in own:
         if err:
             all_tests.append({"id": f"brick:{n['name']}", "name": f"сборка кирпичика {n['name']}", "file": n["module"],
                               "status": "error", "message": err, "text": "", "time": 0, "brick": n["name"], "brick_title": n["title"]})
-            summary.append({"name": n["name"], "title": n["title"], "passed": 0, "total": 1})
+            summary.append({"name": n["name"], "title": n["title"], "passed": 0, "total": 1, "mode": bmode})
             continue
-        r = _run_one(bt, bv, pack[0], pack[1], python, job)
+        r = _run_one(bt, bv, pack[0], pack[1], python, job, mode=bmode)
         tests_b = [{**x, "brick": n["name"], "brick_title": n["title"], "id": f"{n['name']}::{x['id']}"} for x in r["tests"]]
         if r.get("fatal") and not tests_b:
             tests_b = [{"id": f"brick:{n['name']}", "name": f"тесты кирпичика {n['name']}", "file": n["module"], "status": "error",
                         "message": r["fatal"], "text": "", "time": 0, "brick": n["name"], "brick_title": n["title"]}]
         counted = [x for x in tests_b if x["status"] not in ("broken", "skip")]
-        summary.append({"name": n["name"], "title": n["title"], "task_id": bt.id,
+        summary.append({"name": n["name"], "title": n["title"], "task_id": bt.id, "mode": bmode,
                         "passed": sum(x["status"] == "pass" for x in counted), "total": len(counted)})
         all_tests += tests_b
         ms += r.get("ms") or 0
-    r = _run_one(task, version, merged, tests, python, job, broken_note)
+    r = _run_one(task, version, merged, tests, python, job, broken_note, mode)
     all_tests += r["tests"]
     fatal, timeout, ms = r.get("fatal"), r.get("timeout"), ms + (r.get("ms") or 0)
     counted = [t for t in all_tests if t["status"] not in ("broken", "skip")]
     return {"tests": all_tests, "passed": sum(t["status"] == "pass" for t in counted), "total": len(counted),
             "broken": sum(t["status"] == "broken" for t in all_tests), "bricks": summary,
-            "fatal": fatal, "timeout": timeout, "ms": ms, "checked_at": datetime.now().isoformat(timespec="seconds")}
+            "fatal": fatal, "timeout": timeout, "ms": ms, "mode": mode, "checked_at": datetime.now().isoformat(timespec="seconds")}
 
 
 def run_check(attempt_id: int, job) -> dict:
@@ -177,8 +186,9 @@ def run_check(attempt_id: int, job) -> dict:
         task, version = a.task, db.get(TaskVersion, a.version_id)
         code = json.loads(a.files)
         assembly = json.loads(a.assembly or "{}")
+        mode = a.mode or "scratch"
         python = taskfs.resolve_python(task.python)
-    return run_tests(task, version, code, python, job, assembly)
+    return run_tests(task, version, code, python, job, assembly, mode)
 
 
 # ---------- оценка и отчёт ----------
@@ -188,9 +198,11 @@ def unified(a: str, b: str, name: str) -> str:
 
 
 def previous(db, a: Attempt):
-    return (db.query(Attempt).filter(Attempt.task_id == a.task_id, Attempt.status == "submitted",
+    """Прошлая сданная попытка того же режима (время сравниваем с «библиотекой» — по библиотеке)."""
+    rows = (db.query(Attempt).filter(Attempt.task_id == a.task_id, Attempt.status == "submitted",
                                      Attempt.id != a.id, Attempt.finished_at < a.finished_at)
-            .order_by(Attempt.finished_at.desc()).first())
+            .order_by(Attempt.finished_at.desc()).all())
+    return next((x for x in rows if (x.mode or "scratch") == (a.mode or "scratch")), None)
 
 
 def fmt_ms(ms) -> str:
@@ -269,16 +281,18 @@ def finish_submit(attempt_id: int, result: dict):
         assembly = json.loads(a.assembly or "{}")
         mine = json.loads(a.files)
         sc = score_attempt(db, a, result)
-        try:
-            ref_code = bricks.reference_code(db, a.task, files, assembly)
-            written = bricks.written_paths(db, a.task, files, assembly)
+        mode = a.mode or "scratch"
+        try:  # эталон для сравнения — из того же режима
+            ref_code = bricks.reference_code(db, a.task, files, assembly, mode)
+            written = bricks.written_paths(db, a.task, files, assembly, mode)
         except bricks.DepError:
-            ref_code = taskfs.reference_files(files)
+            ref_code = taskfs.reference_files(files, mode)
             written = sorted(f for f in set(ref_code) | set(mine) if roles.get(f, "write") == "write")
         brick_events(db, a, result, mine)
         diffs = {f: semantic.unified(ref_code.get(f, ""), mine.get(f, ""), f) for f in written}  # по смыслу
         history = [{"id": x.id, "date": x.finished_at.isoformat(timespec="minutes"), "score": x.score,
-                    "total_ms": x.total_ms} for x in a.task.attempts if x.status == "submitted" and x.id != a.id]
+                    "total_ms": x.total_ms} for x in a.task.attempts
+                   if x.status == "submitted" and x.id != a.id and (x.mode or "scratch") == mode]  # история того же режима
         history.append({"id": a.id, "date": a.finished_at.isoformat(timespec="minutes"), "score": sc["score"],
                         "total_ms": a.total_ms})
         report = {"result": result, **sc, "diffs": diffs, "written": written, "history": history,
@@ -313,8 +327,9 @@ def brick_events(db, a: Attempt, result: dict, mine: dict):
     """Кирпичики «пишу сам» в составной задаче -> событие повторения у самого кирпичика:
     его тесты прошли — «нормально», упали — «забыл» (и строка в «Сегодня»)."""
     files = json.loads(db.get(TaskVersion, a.version_id).files)
+    assembly = json.loads(a.assembly or "{}")
     try:
-        nodes = {n["name"]: n for n in bricks.tree(db, a.task, json.loads(a.assembly or "{}"), files)}
+        nodes = {n["name"]: n for n in bricks.tree(db, a.task, assembly, files, a.mode or "scratch")}
     except bricks.DepError:
         return
     for b in result.get("bricks") or []:
@@ -325,7 +340,8 @@ def brick_events(db, a: Attempt, result: dict, mine: dict):
         bad = [t for t in result.get("tests", []) if t.get("brick") == b["name"] and t["status"] in ("fail", "error")]
         note = "; ".join(f"{t['name']}: {(t['message'] or t['status']).strip().splitlines()[0][:120]}" for t in bad[:3])
         db.add(BrickEvent(task_id=n["task_id"], parent_task_id=a.task_id, attempt_id=a.id, dep_name=b["name"],
-                          at=a.finished_at, passed=int(ok), grade=3 if ok else 1, code=mine.get(n["module"], ""), note=note))
+                          at=a.finished_at, passed=int(ok), grade=3 if ok else 1, code=mine.get(n["module"], ""), note=note,
+                          mode=b.get("mode") or bricks.node_mode(assembly, n)))  # повтор — в том режиме, в котором кирпичик написан
         db.flush()
         review.replay(db, db.get(Task, n["task_id"]))
 

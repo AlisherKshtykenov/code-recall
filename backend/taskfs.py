@@ -101,19 +101,72 @@ def materialize(name: str, files: dict):
             p.write_text(text, encoding="utf-8")
 
 
-def reference_files(files: dict) -> dict:
-    """{имя относительно reference/: текст}."""
+MODES = ("library", "scratch")  # «Библиотека» — через готовую функцию; «С нуля» — своими руками
+MODE_NAME = {"library": "библиотека", "scratch": "с нуля"}
+
+
+def _nested(files: dict) -> bool:
+    """Новая раскладка reference/library/, reference/scratch/ (а не плоский reference/*.py)."""
+    return any(k.startswith(("reference/library/", "reference/scratch/")) for k in files)
+
+
+def modes_of(files: dict) -> list[str]:
+    """Режимы задачи по эталонам: [library, scratch], один из них или [] (концепт). Плоский reference/ — это scratch."""
+    if _nested(files):
+        return [m for m in MODES if any(k.startswith(f"reference/{m}/") for k in files)]
+    return ["scratch"] if any(k.startswith("reference/") for k in files) else []
+
+
+def default_mode(files: dict) -> str:
+    """Какой режим предлагать первым: «Библиотека», если она есть (сначала — как применять)."""
+    ms = modes_of(files)
+    return "library" if "library" in ms else (ms[0] if ms else "scratch")
+
+
+def ref_mode(files: dict) -> str:
+    """Чей эталон подключать скрыто, когда кирпичик «эталоном»: свой (с нуля), если есть."""
+    ms = modes_of(files)
+    return "scratch" if "scratch" in ms else (ms[0] if ms else "scratch")
+
+
+def reference_files(files: dict, mode: str | None = None) -> dict:
+    """{имя файла: текст} эталона режима (без префикса reference/<режим>/)."""
+    mode = mode or ref_mode(files)
+    if _nested(files):
+        prefix = f"reference/{mode}/"
+        return {k[len(prefix):]: v for k, v in files.items() if k.startswith(prefix)}
+    if mode != "scratch":
+        return {}
     return {k[len("reference/"):]: v for k, v in files.items() if k.startswith("reference/")}
 
 
-def test_files(files: dict) -> dict:
+def reference_names(files: dict) -> list[str]:
+    """Имена файлов эталона по всем режимам (они одинаковые в обоих режимах)."""
+    return sorted({n for m in modes_of(files) for n in reference_files(files, m)})
+
+
+def test_files(files: dict, mode: str | None = None) -> dict:
+    """Общие тесты tests/* + тесты режима tests/<mode>/* (кладутся плоско как tests/test_<mode>__<имя>,
+    чтобы одноимённые файлы разных режимов не мешали pytest). mode=None — только общие."""
+    out = {k: v for k, v in files.items() if k.startswith("tests/") and not k.startswith(("tests/library/", "tests/scratch/"))}
+    if mode:
+        prefix = f"tests/{mode}/"
+        for k, v in files.items():
+            if k.startswith(prefix):
+                rest = k[len(prefix):]
+                name = f"tests/test_{mode}__{rest[5:]}" if rest.startswith("test_") and "/" not in rest else f"tests/{rest}"
+                out[name] = v
+    return out
+
+
+def all_test_files(files: dict) -> dict:
     return {k: v for k, v in files.items() if k.startswith("tests/")}
 
 
 def default_roles(files: dict, meta: dict | None = None) -> dict:
     """Роль каждого файла эталона: write (пишу сам) или given (дан как есть). По умолчанию — write."""
     given = (meta or {}).get("roles", {})
-    return {f: ("given" if given.get(f) == "given" else "write") for f in reference_files(files)}
+    return {f: ("given" if given.get(f) == "given" else "write") for f in reference_names(files)}
 
 
 def json_list(text) -> list:
@@ -137,11 +190,12 @@ def read_meta(files: dict) -> dict:
     return json_dict(files.get("task.json"))
 
 
-def attempt_start_files(files: dict, roles: dict) -> dict:
-    """Файлы новой попытки: «дан» — как в эталоне, «пишу сам» — заготовка или пусто."""
+def attempt_start_files(files: dict, roles: dict, mode: str | None = None) -> dict:
+    """Файлы новой попытки режима: «дан» — как в эталоне, «пишу сам» — заготовка (starter/<режим>/ или starter/) или пусто."""
+    mode = mode or default_mode(files)
     out = {}
-    for f, text in reference_files(files).items():
-        out[f] = text if roles.get(f) == "given" else files.get(f"starter/{f}", "")
+    for f, text in reference_files(files, mode).items():
+        out[f] = text if roles.get(f) == "given" else files.get(f"starter/{mode}/{f}", files.get(f"starter/{f}", ""))
     return out
 
 
@@ -217,14 +271,14 @@ def attempt_dir(name: str, attempt_id: int) -> Path:
     return p
 
 
-def dev_dir(name: str, files: dict | None = None) -> Path:
-    """Запуск эталона из редактора задачи: копия reference/ в корне, data/ и results/ задачи."""
+def dev_dir(name: str, files: dict | None = None, mode: str | None = None) -> Path:
+    """Запуск эталона из редактора задачи: копия reference/<режим>/ в корне, data/ и results/ задачи."""
     base = task_dir(name)
     p = base / ".dev"
     p.mkdir(exist_ok=True)
     _link(p / "data", base / "data")
     _link(p / "results", base / "results")
-    write_code(p, reference_files(files if files is not None else snapshot(name)))
+    write_code(p, reference_files(files if files is not None else snapshot(name), mode))
     return p
 
 

@@ -2,9 +2,9 @@
 
 **Что делает.** Делает шаг против градиента: «спуститься чуть-чуть туда, где потеря меньше». С momentum (импульсом) копит скорость, как шар, катящийся с горки: проскакивает мелкие ямки и меньше дёргается от шума.
 
-$$b \leftarrow \mu b + (1 - \text{dampening})\,g, \qquad w \leftarrow w - \text{lr}\cdot b \quad(\text{nesterov: } g + \mu b)$$
+## Как применять
 
-## Как это делают в жизни
+### Как это делают в жизни
 
 ```python
 import torch
@@ -19,7 +19,8 @@ for epoch in range(90):
     sched.step()
 ```
 
-## Параметры `torch.optim.SGD`
+
+### Параметры `torch.optim.SGD`
 
 | Параметр | По умолчанию | Что значит |
 |---|---|---|
@@ -33,14 +34,16 @@ for epoch in range(90):
 
 Не повторяем: `foreach`, `fused`, `differentiable`, `state_dict`.
 
-## Подводные камни
+
+### Подводные камни
 
 1. **lr больше, чем для Adam.** SGD с lr = 1e-3 (по умолчанию) почти не учит CNN — берут 0.01–0.1 и уменьшают по расписанию.
 2. **Первый шаг с momentum** — просто градиент: буфер создаётся из него, а не из нуля (так в torch).
 3. **Nesterov без momentum** — ошибка, а не «тихо выключится».
 4. **SGD без расписания lr** обычно не доходит до лучшего качества: в конце обучения шаг надо уменьшать.
 
-## Где используется на карте
+
+### Где используется на карте
 
 <!-- map:start -->
 - [regression](#/map/sgd)
@@ -48,8 +51,25 @@ for epoch in range(90):
 - [face_recognition](#/map/sgd)
 <!-- map:end -->
 
+
+## Как работает
+
+$$b \leftarrow \mu b + (1 - \text{dampening})\,g, \qquad w \leftarrow w - \text{lr}\cdot b \quad(\text{nesterov: } g + \mu b)$$
+
+**Идея.** Шаг против градиента; с momentum — против накопленной «скорости», которая сглаживает шум.
+
+$$b \leftarrow \mu b + (1 - \text{dampening})\,g, \qquad w \leftarrow w - \text{lr}\cdot b$$
+
+1. g = градиент (+ wd·w при weight_decay; −g при maximize).
+2. Первый шаг: b = g; дальше b = μ·b + (1 − dampening)·g.
+3. Шаг: w −= lr·b (nesterov — lr·(g + μ·b)).
+
 ## Задача
 
-Напишите класс `SGD` своими руками в `solution.py`: те же параметры и проверки, `param_groups`, `state["momentum_buffer"]`, `step(closure=None)`, `zero_grad(set_to_none=True)`. Веса после любого числа шагов — как у `torch.optim.SGD`.
+**Режим «Библиотека»** — примените `torch.optim.SGD` с той же сигнатурой, что в «С нуля»: тесты проверяют, что вызвано `SGD`. Это учит, как и где применять.
+
+**Режим «С нуля»** — напишите класс `SGD` своими руками в `solution.py`: те же параметры и проверки, `param_groups`, `state["momentum_buffer"]`, `step(closure=None)`, `zero_grad(set_to_none=True)`. Веса после любого числа шагов — как у `torch.optim.SGD`.
 Можно операции над тензорами. Нельзя `torch.optim`.
 В конце файла — `optimizer = SGD`: кирпичик реализует слот **optimizer**.
+
+Общие тесты (сравнение с библиотекой на многих случаях) должны пройти оба режима.

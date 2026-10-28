@@ -1,7 +1,24 @@
 {
-  "title": "ablation (абляция: по одной детали за раз)", "kind": "ml", "topic": "ML/Оценка/Comparison",
-  "tags": ["comparison", "experiments", "defect_detection"], "main": "solution.py", "timeout": 60,
+  "title": "ablation (абляция: по одной детали за раз)",
+  "kind": "ml",
+  "topic": "ML/Оценка/Comparison",
+  "tags": [
+    "comparison",
+    "experiments",
+    "defect_detection"
+  ],
+  "main": "solution.py",
+  "timeout": 60,
   "library": "нет: цикл по вариантам конфигурации (на практике — Hydra multirun, W&B sweeps)",
-  "map_notes": {"defect_detection": "веса да/нет, adam/sgd, dropout да/нет"},
-  "forbidden": {"modules": ["hydra", "optuna", "wandb"], "names": ["product"]}
+  "map_notes": {
+    "defect_detection": "веса да/нет, adam/sgd, dropout да/нет"
+  },
+  "forbidden_modules": [
+    "hydra",
+    "optuna",
+    "wandb"
+  ],
+  "forbidden_names": [
+    "product"
+  ]
 }

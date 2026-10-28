@@ -2,9 +2,9 @@
 
 **Что делает.** Приводит каждый канал картинки к среднему 0 и разбросу 1: из каждого пикселя вычитает среднее канала и делит на его стандартное отклонение. Так сеть учится быстрее и стабильнее. Среднее и std считают один раз по обучающему датасету.
 
-$$x'_{c,h,w} = \frac{x_{c,h,w} - \text{mean}_c}{\text{std}_c}$$
+## Как применять
 
-## Как это делают в жизни
+### Как это делают в жизни
 
 ```python
 import torch
@@ -24,7 +24,8 @@ TF.normalize(img, mean.tolist(), std.tolist())            # то же самое
 
 Для предобученных сетей (resnet, efficientnet) берут статистики ImageNet: `mean=[0.485, 0.456, 0.406]`, `std=[0.229, 0.224, 0.225]`.
 
-## Параметры `torchvision.transforms.functional.normalize`
+
+### Параметры `torchvision.transforms.functional.normalize`
 
 | Параметр | По умолчанию | Что значит |
 |---|---|---|
@@ -35,21 +36,40 @@ TF.normalize(img, mean.tolist(), std.tolist())            # то же самое
 
 `compute_mean_std(data, unbiased=False)` — в torchvision нет: принимает тензор `(N, C, H, W)` или DataLoader и считает по батчам (весь датасет в память не нужен).
 
-## Подводные камни
+
+### Подводные камни
 
 1. **Статистики — только по train.** Mean/std по всему датасету — утечка из теста.
 2. **Сначала float, потом normalize.** На uint8 0..255 `normalize` падает, а если забыть делить на 255 — mean/std ImageNet к данным не подходят.
 3. **Один и тот же transform на train, валидации и инференсе.** Забытая нормализация на инференсе — тихая ошибка: сеть работает, но плохо.
 4. **std по батчам ≠ std датасета.** Средние std батчей занижают разброс; считайте через суммы x и x² по всем пикселям.
 
-## Где используется на карте
+
+### Где используется на карте
 
 <!-- map:start -->
 - [image_classification](#/map/normalize_images) — mean/std ImageNet для предобученных сетей
 - [defect_detection](#/map/normalize_images) — серые 64×64: один канал, mean/std считаем по train
 <!-- map:end -->
 
+
+## Как работает
+
+$$x'_{c,h,w} = \frac{x_{c,h,w} - \text{mean}_c}{\text{std}_c}$$
+
+**Идея.** Сдвинуть и сжать значения каждого канала так, чтобы среднее стало 0, а разброс 1.
+
+$$x' = \frac{x - \text{mean}_c}{\text{std}_c}, \qquad \text{std} = \sqrt{E[x^2] - E[x]^2}$$
+
+1. По всем картинкам train и всем пикселям копим для каждого канала Σx, Σx² и число пикселей.
+2. mean = Σx / n, var = Σx²/n − mean² (несмещённая — ×n/(n−1)), std = √var.
+3. `normalize`: из пикселя вычитаем mean своего канала и делим на std (форма mean — (C, 1, 1)).
+
 ## Задача
 
-Напишите в `solution.py` две функции: `normalize(tensor, mean, std, inplace=False)` — та же сигнатура, тот же результат и те же ошибки, что у torchvision, и `compute_mean_std(data, unbiased=False)` — mean и std каждого канала по датасету.
+**Режим «Библиотека»** — примените `torchvision.transforms.functional.normalize` с той же сигнатурой, что в «С нуля»: тесты проверяют, что вызвано `normalize`. Это учит, как и где применять.
+
+**Режим «С нуля»** — напишите в `solution.py` две функции: `normalize(tensor, mean, std, inplace=False)` — та же сигнатура, тот же результат и те же ошибки, что у torchvision, и `compute_mean_std(data, unbiased=False)` — mean и std каждого канала по датасету.
 Можно базовые операции torch (`sum`, умножение, `reshape`, `transpose`, `sqrt`). Нельзя `torchvision`, `torch.std`/`var`/`std_mean` и нормализующие слои.
+
+Общие тесты (сравнение с библиотекой на многих случаях) должны пройти оба режима.

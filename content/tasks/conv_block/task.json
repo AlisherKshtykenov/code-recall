@@ -1,9 +1,70 @@
 {
-  "title": "conv_block (conv → batch_norm → relu → max_pool)", "kind": "ml", "topic": "ML/Нейросети/Layers",
-  "tags": ["блок", "torch", "cnn", "defect_detection"], "main": "solution.py", "timeout": 120,
+  "title": "conv_block (conv → batch_norm → relu → max_pool)",
+  "kind": "ml",
+  "topic": "ML/Нейросети/Layers",
+  "tags": [
+    "блок",
+    "torch",
+    "cnn",
+    "defect_detection"
+  ],
+  "main": "solution.py",
+  "timeout": 120,
   "library": "nn.Sequential(nn.Conv2d, nn.BatchNorm2d, nn.ReLU, nn.MaxPool2d)",
-  "deps": [{"name": "conv2d", "task": "conv2d"}, {"name": "batch_norm", "task": "batch_norm"},
-           {"name": "relu", "task": "relu"}, {"name": "max_pool2d", "task": "max_pool2d"}],
-  "map_notes": {"defect_detection": "строительный блок baseline_cnn (2–3 штуки подряд)"},
-  "forbidden": {"modules": ["torch.nn.functional"], "names": ["Conv2d", "BatchNorm2d", "ReLU", "MaxPool2d", "Sequential", "functional"]}
+  "deps": [
+    {
+      "name": "conv2d",
+      "task": "conv2d",
+      "modes": [
+        "scratch"
+      ]
+    },
+    {
+      "name": "batch_norm",
+      "task": "batch_norm",
+      "modes": [
+        "scratch"
+      ]
+    },
+    {
+      "name": "relu",
+      "task": "relu",
+      "modes": [
+        "scratch"
+      ]
+    },
+    {
+      "name": "max_pool2d",
+      "task": "max_pool2d",
+      "modes": [
+        "scratch"
+      ]
+    }
+  ],
+  "map_notes": {
+    "defect_detection": "строительный блок baseline_cnn (2–3 штуки подряд)"
+  },
+  "forbidden_modules": [
+    "torch.nn.functional"
+  ],
+  "forbidden_names": [
+    "Conv2d",
+    "BatchNorm2d",
+    "ReLU",
+    "MaxPool2d",
+    "Sequential",
+    "functional"
+  ],
+  "library_function": "torch.nn.functional: conv2d, batch_norm, relu, max_pool2d",
+  "required_names": [
+    "conv2d",
+    "batch_norm",
+    "relu",
+    "max_pool2d"
+  ],
+  "required_kwargs": {
+    "batch_norm": [
+      "training"
+    ]
+  }
 }

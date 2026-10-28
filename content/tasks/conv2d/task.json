@@ -1,7 +1,49 @@
 {
-  "title": "conv2d (свёртка 2D)", "kind": "ml", "topic": "ML/Нейросети/Layers",
-  "tags": ["layers", "torch", "cnn", "defect_detection"], "main": "solution.py", "timeout": 120, "library": "torch.nn.functional.conv2d",
-  "map_notes": {"defect_detection": "первый слой каждого conv_block: ищет царапины и пятна"},
-  "forbidden": {"modules": ["torch.nn", "torch.nn.functional", "scipy", "numpy"],
-                "names": ["conv2d", "conv1d", "conv3d", "convolution", "_convolution", "conv_transpose2d", "Conv2d", "fold", "im2col", "correlate", "nn", "functional"]}
+  "title": "conv2d (свёртка 2D)",
+  "kind": "ml",
+  "topic": "ML/Нейросети/Layers",
+  "tags": [
+    "layers",
+    "torch",
+    "cnn",
+    "defect_detection"
+  ],
+  "main": "solution.py",
+  "timeout": 120,
+  "library": "torch.nn.functional.conv2d",
+  "map_notes": {
+    "defect_detection": "первый слой каждого conv_block: ищет царапины и пятна"
+  },
+  "forbidden_modules": [
+    "torch.nn",
+    "torch.nn.functional",
+    "scipy",
+    "numpy"
+  ],
+  "forbidden_names": [
+    "conv2d",
+    "conv1d",
+    "conv3d",
+    "convolution",
+    "_convolution",
+    "conv_transpose2d",
+    "Conv2d",
+    "fold",
+    "im2col",
+    "correlate",
+    "nn",
+    "functional"
+  ],
+  "library_function": "torch.nn.functional.conv2d",
+  "required_names": [
+    "conv2d"
+  ],
+  "required_kwargs": {
+    "conv2d": [
+      "stride",
+      "padding",
+      "dilation",
+      "groups"
+    ]
+  }
 }

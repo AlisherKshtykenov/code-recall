@@ -374,3 +374,70 @@ table.map tr.hl td { background: rgba(255, 161, 22, .09); }
 .tile .bar i.ok { background: var(--ok); }
 tr.planned td { opacity: .65; }
 .planned-n { color: var(--muted); }
+
+/* ---------- режимы: «Библиотека» | «С нуля» ---------- */
+.halves { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; vertical-align: middle; }
+.half { padding: 0 6px; font-size: 12px; line-height: 18px; min-width: 18px; text-align: center; }
+.half + .half { border-left: 1px solid var(--line); }
+.half.ok { background: rgba(44, 187, 93, .2); color: var(--ok); }
+.half.warn { background: rgba(255, 192, 30, .22); color: var(--warn); }
+.half.err { background: rgba(239, 71, 67, .2); color: var(--err); }
+.half.muted { background: rgba(59, 130, 246, .16); color: #3b82f6; }
+.half.none { color: var(--muted); background: transparent; }
+.badge.mode-library { background: rgba(59, 130, 246, .16); color: #3b82f6; }
+.badge.mode-scratch { background: rgba(255, 161, 22, .18); color: var(--accent); }
+.chip.split { background: linear-gradient(90deg, var(--l) 0 50%, var(--r) 50% 100%); color: var(--text); }
+:root { --chip-new: rgba(59, 130, 246, .35); --chip-learned: rgba(44, 187, 93, .38); --chip-due: rgba(255, 192, 30, .45);
+        --chip-weak: rgba(239, 71, 67, .4); --chip-none: rgba(127, 127, 127, .12); --chip-planned: transparent; --chip-concept: transparent; }
+
+/* ---------- конструктор задач: доска на Drawflow (палитра | холст | инспектор) ---------- */
+.bf-page { display: flex; flex-direction: column; height: calc(100vh - 52px); }
+.bf-top { display: flex; gap: 8px; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--panel); flex-wrap: wrap; }
+.bf-cols { flex: 1; display: grid; grid-template-columns: 260px 1fr 380px; min-height: 0; }
+.bf-palette, .bf-inspector { margin: 0; border-radius: 0; overflow: auto; box-shadow: none; }
+.bf-palette { border-right: 1px solid var(--line); }
+.bf-inspector { border-left: 1px solid var(--line); }
+.bf-center { position: relative; min-width: 0; }
+.bf-center > .bf-canvas { position: absolute; inset: 0; }
+.bf-canvas { position: relative; overflow: hidden; border-radius: 6px; background: var(--bg); }
+.bf-flow { width: 100%; height: 100%; background-color: var(--bg);
+  background-image: radial-gradient(var(--line) 1px, transparent 1px); background-size: 20px 20px; }
+.bf-zoom { position: absolute; left: 10px; bottom: 10px; display: flex; gap: 4px; z-index: 5; }
+.bf-minimap { position: absolute; right: 10px; bottom: 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; z-index: 5; cursor: pointer; opacity: .92; }
+.bf-msg { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 6; background: var(--panel); border: 1px solid var(--line);
+  border-radius: 6px; padding: 6px 12px; box-shadow: var(--shadow); max-width: 80%; font-size: 13px; }
+.bf-msg.err { border-color: var(--err); }
+.bf-pal-item { padding: 4px 6px; border-radius: 5px; cursor: grab; font-size: 13px; display: flex; gap: 6px; align-items: center; }
+.bf-pal-item:hover { background: var(--hover); }
+.bf-pal-tpl { color: var(--accent); }
+.bf-planned { color: var(--muted); }
+.bf-palette summary { cursor: pointer; font-size: 13px; padding: 3px 0; }
+.bf-code { height: 340px; border: 1px solid var(--line); border-radius: 6px; margin-top: 6px; }
+
+/* узлы */
+.bf-canvas .drawflow .drawflow-node.bf-node { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 8px;
+  padding: 0; width: 190px; min-height: 0; box-shadow: var(--shadow); }
+.bf-canvas .drawflow .drawflow-node.bf-node.selected { border-color: var(--accent); background: var(--panel); }
+.bf-canvas .drawflow .drawflow-node.lvl-brick { width: 170px; }
+.bf-canvas .drawflow .drawflow-node.lvl-block { width: 230px; border-width: 2px; }
+.bf-canvas .drawflow .drawflow-node.lvl-wall { width: 300px; min-height: 120px; border: 2px solid var(--muted); border-radius: 12px; background: var(--panel-2); }
+.bf-canvas .drawflow .drawflow-node.bf-draft { border-style: dashed; border-color: var(--muted); }
+.bf-canvas .drawflow .drawflow-node.bf-slot { border-radius: 18px; width: 170px; background: var(--panel-2); }
+.bf-canvas .drawflow .drawflow-node.bf-root { box-shadow: 0 0 0 2px rgba(255, 161, 22, .35); }
+.bf-canvas .drawflow .drawflow-node.bf-multi { outline: 2px solid var(--link); outline-offset: 2px; }
+.bf-canvas .drawflow .drawflow-node.bf-cycle { border-color: var(--err); box-shadow: 0 0 0 3px rgba(239, 71, 67, .45); }
+.bf-body { padding: 8px 10px; border-left: 4px solid var(--cat, var(--line)); border-radius: 7px; }
+.bf-slot-body { padding: 8px 12px; }
+.bf-slot-body select, .bf-src { width: 100%; margin-top: 4px; font-size: 12px; }
+.bf-src { margin: 0 10px 8px; width: calc(100% - 20px); }
+.bf-kind { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.bf-title { display: block; font-size: 13.5px; margin: 2px 0 4px; }
+.bf-meta { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.bf-collapsed { font-size: 12px; color: var(--link); margin-top: 4px; }
+.bf-canvas .drawflow .drawflow-node .input, .bf-canvas .drawflow .drawflow-node .output { width: 14px; height: 14px; background: var(--panel-2); border: 2px solid var(--muted); }
+.bf-canvas .drawflow .drawflow-node .input { left: -8px; }
+.bf-canvas .drawflow .drawflow-node .output { right: -8px; }
+.bf-canvas .drawflow .drawflow-node .output:hover, .bf-canvas .drawflow .drawflow-node .input:hover { border-color: var(--accent); }
+.bf-canvas .drawflow .connection .main-path { stroke: var(--muted); stroke-width: 2px; }
+.bf-canvas .drawflow .connection .main-path:hover, .bf-canvas .drawflow .connection .main-path.selected { stroke: var(--accent); }
+.bf-canvas .drawflow-delete { background: var(--err); border: none; color: #fff; }
