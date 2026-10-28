@@ -4,8 +4,9 @@ import ast
 import json
 import re
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 
+from sqlalchemy.exc import IntegrityError
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
@@ -392,6 +393,10 @@ def write_meta(files: dict, **kw) -> dict:
 
 
 def make_task(db, title: str, files: dict, topic_id=None, tags=(), kind="algo") -> Task:
+    # защита от двойного создания (двойной клик, повтор запроса): та же задача только что создана
+    recent = db.query(Task).filter(Task.title == title, Task.created_at > datetime.now() - timedelta(seconds=10)).first()
+    if recent:
+        raise HTTPException(409, f"задача «{title}» только что создана — повторный запрос пропущен")
     name = taskfs.slug(title)
     base, i = name, 2
     while db.query(Task).filter_by(name=name).first():
@@ -399,7 +404,11 @@ def make_task(db, title: str, files: dict, topic_id=None, tags=(), kind="algo") 
     t = Task(name=name, title=title, kind=kind if kind in ("algo", "ml") else "algo", topic_id=topic_id,
              tags=json.dumps(list(tags), ensure_ascii=False))
     db.add(t)
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError:  # второй одновременный запрос: имя уже занято первым
+        db.rollback()
+        raise HTTPException(409, f"задача «{title}» только что создана — повторный запрос пропущен")
     err = deps_ok(db, t, files)
     if err:
         db.rollback()
@@ -432,13 +441,22 @@ def wizard(body: WizardIn, db=Depends(get_db)):
     return {"id": t.id}
 
 
+class DuplicateIn(BaseModel):
+    title: str
+
+
 @router.post("/tasks/{tid}/duplicate")
-def duplicate(tid: int, db=Depends(get_db)):
+def duplicate(tid: int, body: DuplicateIn, db=Depends(get_db)):
+    """Копия задачи под новым названием (его спрашивает интерфейс; «(копия)» больше не дописывается)."""
     t = db.get(Task, tid)
     if t is None:
         raise HTTPException(404, "задача не найдена")
+    title = body.title.strip()
+    if not title:
+        raise HTTPException(400, "укажите название новой задачи")
+    if db.query(Task).filter(Task.title == title).first():
+        raise HTTPException(409, f"задача «{title}» уже есть — выберите другое название")
     files = json.loads(t.current.files)
-    title = f"{t.title} (копия)"
     write_meta(files, title=title)
     n = make_task(db, title, files, t.topic_id, taskfs.json_list(t.tags), t.kind)
     n.python, n.timeout, n.main_file = t.python, t.timeout, t.main_file

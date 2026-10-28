@@ -638,7 +638,8 @@ async function viewBuilder(taskId) {
     if (members.length < 2) return showMsg("выделите карточки: Shift + клик по каждой", "muted");
     if (members.some(k => byKey[k].kind === "draft")) return showMsg("черновики сначала сохраните («Сохранить»), потом собирайте в блок");
     title = title || $("#bf-blockname")?.value.trim() || prompt("Имя блока", "новый блок");
-    if (!title) return;
+    if (!title || makeBlock.busy) return;
+    makeBlock.busy = true;  // ⌘G и кнопка одновременно не создадут два блока
     try {
       const card = await api("/api/builder/block", { method: "POST", json: { title, members, topic_id: topicId ?? ($("#bf-topic").value ? +$("#bf-topic").value : null),
         tags: ["блок", ...tags.filter(t => !["стена", "блок"].includes(t))] } });
@@ -656,7 +657,7 @@ async function viewBuilder(taskId) {
       markDirty();
       toast(`блок «${card.title}» создан — зависимости: ${card.deps.map(d => d.name).join(", ")}`);
       selected = key; inspect(key); renderPalette(); redraw();
-    } catch (e) { showMsg(e.message); }
+    } catch (e) { showMsg(e.message); } finally { makeBlock.busy = false; }
   }
   function expand(key) {  // двойной клик по свёрнутому блоку: вернуть карточки и стрелки в блок
     const d = byKey[key];
@@ -849,6 +850,9 @@ async function viewBuilder(taskId) {
 
   // ---- верхние кнопки ----
   $("#bf-save").onclick = async () => {
+    const btn = $("#bf-save");
+    if (btn.disabled) return;
+    btn.disabled = true;  // повторный клик не создаст черновики второй раз
     try {
       if (cycles.length) {  // с циклом зависимости не меняем: сохраняем только раскладку
         await api("/api/builder/board", { method: "PUT", json: { task_id: root ? root.id : null, board: boardState() } });
@@ -876,7 +880,7 @@ async function viewBuilder(taskId) {
       renderStatus();
       showMsg(`сохранено: новых задач ${Object.keys(r.created).length}, зависимости обновлены у ${r.changed.length}`, "muted");
       renderPalette();
-    } catch (e) { showMsg(e.message); }
+    } catch (e) { showMsg(e.message); } finally { btn.disabled = false; }
   };
   $("#bf-cancel").onclick = async () => {
     if (dirty && !confirm("Отменить несохранённые изменения на холсте?")) return;

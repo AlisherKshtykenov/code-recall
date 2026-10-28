@@ -332,7 +332,14 @@ async function viewTask(id, tab = "about") {
   paint();
   const go = $("#go");
   if (go) go.onclick = () => startAttempt(t.id, mode);
-  $("#dup").onclick = async () => { const r = await api(`/api/tasks/${t.id}/duplicate`, { method: "POST" }); toast("копия создана"); location.hash = `#/task/${r.id}`; };
+  $("#dup").onclick = async e => {  // копия под новым названием; кнопка заблокирована, пока идёт запрос
+    const title = prompt("Название новой задачи (копия всех файлов этой задачи)", "");
+    if (!title || !title.trim()) return;
+    if (title.trim() === t.title) return toast("название должно отличаться от исходной задачи", true);
+    e.currentTarget.disabled = true;
+    try { const r = await api(`/api/tasks/${t.id}/duplicate`, { method: "POST", json: { title: title.trim() } }); toast(`создана «${title.trim()}»`); location.hash = `#/task/${r.id}`; }
+    catch (err) { toast(err.message, true); $("#dup").disabled = false; }
+  };
   const rc = $("#recheck");
   if (rc) rc.onclick = async () => { rc.disabled = true; const { job } = await api(`/api/tasks/${t.id}/recheck`, { method: "POST" }); await followJob(job, () => {}); viewTask(id, tab); };
   const box = $("#tab");
