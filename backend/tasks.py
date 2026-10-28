@@ -333,7 +333,7 @@ def task_short(t: Task) -> dict:
             "due_at": iso(t.due_at), "status": review.task_status(t), "updated_at": iso(t.updated_at),
             "statuses": mode_statuses(t, files),  # {library: new|due|solved|none, scratch: …}
             "topic_id": t.topic_id, "tags": taskfs.json_list(t.tags), "broken": t.broken or "",
-            "implements": bricks.implements_of(files), "deps": bricks.deps_of(files) or [],
+            "implements": bricks.implements_of(files), "deps": bricks.deps_of(files) or [], "level": bricks.level_of(files),
             "type": "composite" if bricks.deps_of(files) else "slot" if bricks.implements_of(files) else "plain"}
 
 

@@ -49,6 +49,16 @@ def deps_of(files: dict, mode: str | None = None) -> list[dict]:
     return out
 
 
+def level_of(files: dict) -> str:
+    """Уровень по размеру карточки: brick — без зависимостей, block — из кирпичиков, wall — стена (пайплайн с данными)."""
+    meta = taskfs.read_meta(files)
+    if "стена" in (meta.get("tags") or []) or meta.get("level") == "wall":
+        return "wall"
+    # блок — если зависимости есть в каждом режиме; зависимость одного режима (recall «с нуля» -> confusion_matrix) — нет
+    modes = taskfs.modes_of(files) or [None]
+    return "block" if all(deps_of(files, m) for m in modes) else "brick"
+
+
 def implements_of(files: dict) -> str:
     v = taskfs.read_meta(files).get("implements")
     return str(v) if v else ""

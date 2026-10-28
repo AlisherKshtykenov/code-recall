@@ -411,14 +411,26 @@ async function viewAttempt(id) {
   let refFiles = null;
   if (readonly) refFiles = (await api(`${base}/reference`, { method: "POST" })).files;  // после окончания — без штрафа
   const needsWork = readonly && (a.outcome === "abandoned" || a.outcome === "partial");
+  // шапка: тема (крошки), уровень, режим; «попытка N · лучшее X» — из списка попыток
+  const [tk, topics, tries] = await Promise.all([api(`/api/tasks/${a.task_id}`).catch(() => null), apiList("/api/topics"), apiList(`/api/tasks/${a.task_id}/attempts`)]);
+  const level = taskLevel(tk);
+  const nTry = tries.length - tries.findIndex(x => x.id === a.id), best = Math.max(-1, ...tries.filter(x => x.score != null).map(x => x.score));
+  const fileMode = p => brickOf[p] ? (brickOf[p].mode || (brickOf[p].source === "self_library" ? "library" : "scratch")) : a.files.includes(p) && a.roles[p] !== "given" ? a.mode : null;
+  const bricksNote = (() => {
+    const other = (a.bricks || []).filter(b => b.source?.startsWith("self_") && fileMode(b.module) !== a.mode);
+    return other.length ? `<span class="faint">+ ${other.map(b => esc(b.name)).join(", ")} — ${MODE_NAME[fileMode(other[0].module)] === "библиотека" ? "библиотекой" : "с нуля"}</span>` : "";
+  })();
 
   const leftTabs = [
-    { id: "desc", label: "Описание", render: el => { el.innerHTML = `<h2>${esc(a.title)}</h2><div class="row" style="margin-bottom:10px">${kindBadge(a.kind)}${a.tag ? `<span class="badge">${esc(a.tag)}</span>` : ""}
-        <span class="muted small">v${a.version} · лимит ${a.timeout} с</span></div>
+    { id: "desc", label: "Описание", render: el => { el.innerHTML = `<h2 class="ide-h">${esc(a.title)}</h2>
       <div class="md">${a.description ? md(a.description) : '<p class="muted">описания нет</p>'}</div>
-      <div class="label mt">Файлы</div>${a.files.map(f => `<div class="small"><span class="mono">${esc(f)}</span> — ${a.roles[f] === "given" ? "дан" : brickOf[f] ? `кирпичик «${esc(brickOf[f].title)}», пишу сам` : "пишу сам"}</div>`).join("")}`; } },
+      <div class="label mt">Что пишешь и как</div>
+      <div class="wlist">${a.files.filter(f => a.roles[f] !== "given").map(f => { const m = fileMode(f);
+        return `<div class="wrow"><span class="fsq-l ${m ? `m-${m}` : ""}"></span><span class="mono wname">${esc(f)}</span><span class="grow"></span>${m ? `<span class="mi mi-${m === "library" ? "lib" : "scr"}" title="${MODE_TITLE[m]}">${ICON[MODE_ICON[m]]}</span>` : ""}</div>`; }).join("")}</div>
+      ${a.files.some(f => a.roles[f] === "given") ? `<div class="faint small mt">даны готовыми: ${a.files.filter(f => a.roles[f] === "given").map(f => `<span class="mono">${esc(f)}</span>`).join(", ")}</div>` : ""}
+      <div class="faint small mt">v${a.version} · лимит ${a.timeout} с</div>`; } },
     ...(readonly ? [{ id: "report", label: a.report?.weights ? "Отчёт" : "Итог", render: el => a.report?.weights ? renderReport(el, a, na => { a = na; }) : renderAbandoned(el, a) }] : []),
-    { id: "attempts", label: "Попытки", render: async el => {
+    { id: "attempts", label: `Попытки${tries.length ? ` <span class="faint">${tries.length}</span>` : ""}`, html: true, render: async el => {
       const list = await api(`/api/tasks/${a.task_id}/attempts`);
       const done = list.filter(x => x.score != null).reverse();
       el.innerHTML = `${list.map(x => `<div class="row small" style="padding:4px 0;border-bottom:1px solid var(--line)"><a href="#/attempt/${x.id}">${fmtDate(x.date)}</a>
@@ -426,12 +438,17 @@ async function viewAttempt(id) {
         ${done.length ? '<div id="h" class="mt"></div>' : ""}`;
       if (done.length) historyCharts($("#h", el), done.map(x => ({ date: x.finished_at, score: x.score, total_ms: x.total_ms })));
     } },
-    ...(readonly ? [] : [{ id: "ref", label: "Эталон", render: el => renderReference(el, a, base, readonly, () => refFiles, f => { refFiles = f; a.ref_opened = true; }) }]),
+    ...(readonly ? [] : [{ id: "ref", label: `${ICON.lock}Эталон`, html: true, render: el => renderReference(el, a, base, readonly, () => refFiles, f => { refFiles = f; a.ref_opened = true; }) }]),
     ...((a.bricks || []).length ? [{ id: "asm", label: "Сборка", render: el => renderAssemblyTab(el, a) }] : []),
   ];
 
   current = await openIDE(view, {
     title: `${a.title} · ${MODE_NAME[a.mode] || a.mode}` + (readonly ? ` · ${OUTCOME_TITLE[a.outcome] || a.outcome}` : ""), base, readonly, back: `#/task/${a.task_id}`,
+    heading: a.title, crumbs: tk?.topic_id ? esc(topicPath(topics, tk.topic_id)).replaceAll(" / ", '<span class="sep">/</span>') : "",
+    badges: `${levelTag(level)}${modeBadge(a.mode)}${bricksNote}`,
+    meta: tries.length ? `попытка ${nTry}${best >= 0 ? ` · лучшее ${best}` : ""}` : "",
+    fileMode, python: a.python, checks: a.checks, hiddenTests: true, taskTitle: a.title,
+    rule: `${modeBadge(a.mode, { short: true })} ${a.mode === "library" ? "через готовую функцию библиотеки — её вызов проверяется" : "своими руками — готовая функция библиотеки запрещена"}`,
     roles: a.roles, main: a.main_file, pyFiles: a.files, preload: a.files, expand: [],
     open: readonly ? written : [a.main_file, ...written.filter(f => f !== a.main_file)].filter(Boolean),
     tabNote: p => brickOf[p] ? `<span class="role" title="${esc(brickOf[p].title)}">кирпичик</span>` : "",
@@ -442,18 +459,20 @@ async function viewAttempt(id) {
     stop: () => api(`${base}/stop`, { method: "POST" }),
     check: () => api(`${base}/check`, { method: "POST" }).then(r => { a.checks = r.checks; updateChecks(); return r.job; }),
     bindData: ide => bindDataPrompt(a.task_id, ide),
-    buttons: (el, ide) => {
-      el.innerHTML = `<span class="timer" id="timer" title="время попытки">${fmtMs(totalMs())}</span>
+    buttons: (el, ide, sub, menu) => {
+      el.innerHTML = `<span class="timer" id="timer" title="время попытки">${ICON.clock}${fmtMs(totalMs())}</span>
         ${readonly ? `<span class="badge ${JSTATUS[a.outcome] || ""}">${OUTCOME_TITLE[a.outcome] || a.outcome}</span>${a.score != null ? `<b>${a.score}</b>` : ""}
             ${a.status !== "checking" ? `<button class="${needsWork ? "primary" : "ghost"}" id="work">${needsWork ? "Работа над ошибками сейчас" : "Работа над ошибками"}</button>` : ""}`
-          : `<span class="muted small" id="checks"></span><button class="icon-btn" id="reset" title="вернуть текущий файл к заготовке">↺ файл</button>
-             <button class="ghost" id="abandon" title="закончить без сдачи: попытка сохранится как брошенная">Сбросить</button><button class="primary" id="submit">Сдать</button>`}`;
+          : ""}`;
+      if (!readonly) menu.innerHTML = `<div class="menu-row faint" id="checks"></div><button class="menu-item" id="reset">↺ Вернуть текущий файл к заготовке</button>
+             <button class="menu-item danger" id="abandon" title="попытка сохранится как брошенная">Сбросить попытку</button>`;
+      if (!readonly) sub.innerHTML = `<button class="primary" id="submit">${ICON.arrowUp}Сдать</button>`;
       if (readonly) {
         const w = $("#work", el);
         if (w) w.onclick = () => startReview(a.id);
         return;
       }
-      $("#reset", el).onclick = async () => {
+      $("#reset", menu).onclick = async () => {
         const p = ide.current;
         if (!p || !a.files.includes(p)) return toast("откройте файл задачи", true);
         if (!confirm(`Вернуть ${p} к заготовке? Текущий код этого файла пропадёт.`)) return;
@@ -461,17 +480,17 @@ async function viewAttempt(id) {
         ide.models[p].setValue(r.content);
         await ide.save(p);
       };
-      $("#abandon", el).onclick = async () => {
+      $("#abandon", menu).onclick = async () => {
         if (!confirm("Сбросить попытку? Она сохранится в истории как брошенная (со всем кодом), в повторениях — как «забыл».")) return;
         await finishAs("abandon");
         viewAttemptAgain();
       };
-      $("#submit", el).onclick = async () => {
+      $("#submit", sub).onclick = async () => {
         if (!confirm("Сдать решение? Будет финальный прогон тестов и оценка.")) return;
         await ide.saveAll();
         ended = true;
         clearInterval(tick); clearInterval(autosave);
-        $("#submit", el).disabled = true;
+        $("#submit", sub).disabled = true;
         ide.showConsole("tests");
         const tv = $('[data-cv="tests"]', view);
         tv.innerHTML = '<div class="run-head"><span>финальный прогон</span><span class="spinner"></span></div><div data-o></div>';

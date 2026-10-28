@@ -269,36 +269,79 @@ function errorLine(text, files, code = {}) {
 
 // «assert 0.91 >= 0.95» -> получено 0.91, ожидалось >= 0.95; «isclose(tensor(6.33), tensor(4.33))» -> ≈
 function expectedGot(message, text = "") {
+  const all = (message || "") + "\n" + (text || "");
+  const isName = v => /^[A-Za-z_]\w*$/.test(String(v).trim()) && !/^(True|False|None|nan|inf)$/.test(String(v).trim());
+  const ok = r => r && !isName(r.got) && !isName(r.expected) ? r : null;
+  // pytest: «where False = <function allclose …>(1.0, 0.6667, equal_nan=True)» — значения, а не имена
+  const arg = "([^,()\\[\\]]+(?:\\([^()\\[\\]]*\\))?|\\[[^\\]]*\\])";
+  let c = all.match(new RegExp(`(?:isclose|allclose|array_equal)[^(\\n]*\\(${arg},\\s*${arg}(?:,[^)\\n]*)?\\)`, "m"));
+  let r = c && ok({ got: c[1].trim(), op: "≈", expected: c[2].trim() });
+  if (r) return r;
+  // сообщение теста: «полнота 1.0 ≠ sklearn 0.6667»
+  const val = "(-?[\\d.]+(?:e[-+]?\\d+)?|nan|inf|True|False|None|\\[[^\\]]*\\])";
+  c = (message || "").match(new RegExp(`${val}\\s*(?:≠|!=)\\s*(?:[A-Za-zА-Яа-я_]+\\s+)?${val}`));
+  r = c && ok({ got: c[1], op: "=", expected: c[2] });
+  if (r) return r;
   const first = (message || "").split("\n").find(l => /\bassert\b/.test(l));
   const m = first && first.match(/\bassert\s+(.+?)\s+(==|!=|>=|<=|<|>|is not|is|not in|in)\s+(.+)$/);
-  if (m) return { got: m[1], op: m[2], expected: m[3] };
-  // аргумент — число или tensor(…) без вложенных массивов: «isclose(tensor(6.33), tensor(4.33))»
-  const arg = "([^,()\\[\\]]+(?:\\([^()\\[\\]]*\\))?)";
-  const c = (message + "\n" + text).match(new RegExp(`(?:isclose|allclose)[^(]*\\(${arg}, ${arg}\\)\\s*$`, "m"));
-  return c ? { got: c[1], op: "≈", expected: c[2] } : null;
+  return m ? ok({ got: m[1], op: m[2], expected: m[3] }) : null;
 }
 
+// проверка режима (не тест поведения): файлы tests/library|scratch раскладываются как test_<режим>__<имя>
+const modeCheckOf = t => (/^tests\/test_(library|scratch)__/.exec(t.file || "") || /^test_(library|scratch)__/.exec(t.file || "") || [])[1] || null;
+function testsCount(check) {
+  const all = arr(check.tests), mc = all.filter(modeCheckOf), rest = all.filter(t => !modeCheckOf(t));
+  const ok = l => l.filter(t => t.status === "pass").length;
+  return `${ok(rest)}/${rest.length}${mc.length ? ` · режим ${ok(mc)}/${mc.length}` : ""}`;
+}
 function testsHtml(check, opts = {}) {
-  if (!check) return '<div class="empty">Нажмите «Проверить», чтобы прогнать тесты.</div>';
+  if (!check) return emptyState({ icon: "flask", title: "Тесты ещё не запускали", text: "«Проверить» прогонит тесты, попытка не засчитывается." });
   if (check.fatal && !check.tests?.length) return `<div class="err" style="padding:8px">${esc(check.fatal)}</div>`;
-  const broken = check.broken ? ` · <span class="warn">${check.broken} сломан(о) на эталоне — не учитывается</span>` : "";
-  const all = check.total && check.passed === check.total;
-  const bricks = (check.bricks || []).length ? `<div class="small" style="margin-top:4px">сначала кирпичики «пишу сам»: ${check.bricks.map(b => `<span class="${b.total && b.passed === b.total ? "ok" : "err"}">${esc(b.name)} ${b.passed}/${b.total}${b.total && b.passed === b.total ? " ✓" : " ✗ упал"}</span>`).join(" · ")}, потом тесты задачи</div>` : "";
-  return `<div class="summary-bar"><b class="${all ? "ok" : "err"}">${check.passed}/${check.total} тестов прошли</b>${broken}${bricks}
-      ${check.ms != null ? `<span class="muted small">${(check.ms / 1000).toFixed(1)} с</span>` : ""}</div>`
-    + check.tests.map(t => {
-      const [cls, ico] = TEST_ICON[t.status] || ["muted", "?"];
-      return `<div class="test-row"><span class="${cls}">${ico}</span><span>${t.mode ? `${modeBadge(t.mode, { short: true })} ` : ""}${t.brick ? `<span class="badge" title="${esc(t.brick_title || "")}">кирпичик ${esc(t.brick)}</span> ` : ""}<b>${esc(t.name)}</b> <span class="muted small">${esc(t.file)}</span></span>
-        <span class="muted small">${t.time ? t.time.toFixed(2) + " с" : ""}</span>
-        ${t.message ? `<div class="msg">${esc(t.message.split("\n").slice(0, 4).join("\n"))}</div>` : ""}
-        ${(() => {
-          if (!["fail", "error"].includes(t.status)) return "";
-          const eg = expectedGot(t.message, t.text), loc = opts.files && errorLine(t.text, opts.files, opts.code);
-          return (eg || loc) ? `<div class="eg">${eg ? `получено <b class="mono">${esc(eg.got)}</b> · ожидалось <b class="mono">${esc(eg.op)} ${esc(eg.expected)}</b>` : ""}
-            ${loc ? `<button class="small ghost" data-loc="${esc(loc.file)}:${loc.line}">показать в коде · ${esc(loc.file)}:${loc.line}${loc.fn ? ` (${esc(loc.fn)})` : ""}</button>` : ""}</div>` : "";
-        })()}
-        ${t.text ? `<details><summary class="muted small">traceback</summary><pre>${esc(t.text)}</pre></details>` : ""}</div>`;
-    }).join("");
+  if (!arr(check.tests).length) return emptyState({ icon: "flask", tone: "due", title: "У задачи нет тестов", text: "Добавьте <span class=\"mono\">test_*.py</span> в tests/, и задача станет полноценной." });
+  const failed = t => ["fail", "error"].includes(t.status);
+  const groups = [];
+  const groupOf = (key, make) => groups.find(g => g.key === key) || (groups.push({ key, tests: [], ...make() }), groups[groups.length - 1]);
+  for (const t of check.tests) {
+    const mc = modeCheckOf(t);
+    const g = mc ? groupOf("mode", () => ({ title: "Проверки режима", note: "не тесты: как именно написан код", mode: true }))
+      : t.brick ? groupOf(`b:${t.brick}`, () => ({ title: t.brick, note: `bricks/${t.brick}.py${t.mode ? ` · ${MODE_NAME[t.mode] || t.mode}` : ""}`, mono: true }))
+      : groupOf("task", () => ({ title: opts.taskTitle || "тесты задачи", note: "", mono: false }));
+    g.tests.push(t);
+  }
+  // кирпичики первыми, потом задача, проверки режима — в конце
+  groups.sort((a, b) => (a.key === "mode") - (b.key === "mode") || (a.key === "task") - (b.key === "task"));
+  const broken = check.broken ? `<span class="warn small">${check.broken} сломано на эталоне — не учитывается</span>` : "";
+  const one = t => {
+    const eg = expectedGot(t.message, t.text), loc = opts.files && errorLine(t.text, opts.files, opts.code);
+    const mc = modeCheckOf(t), first = (t.message || "").split("\n")[0];
+    const exc = /^(\w+(Error|Exception))\b/.exec(first)?.[1];
+    const what = mc ? `${modeBadge(mc, { short: true })} ${esc(first.replace(/^AssertionError:\s*/, ""))}`
+      : eg ? `<b class="mono">${esc(t.name)}</b> <span class="faint">— ожидалось</span> <span class="ok mono">${esc(eg.expected)}</span><span class="faint">, получено</span> <span class="err mono">${esc(eg.got)}</span>`
+      : `<b class="mono">${esc(t.name)}</b> <span class="faint">— ${esc(exc || first.slice(0, 120))}</span>`;
+    const detail = !mc && !eg && t.message && t.message.split("\n").length > 1 ? `<div class="t-box"><pre>${esc(t.message.split("\n").slice(0, 8).join("\n"))}</pre></div>` : "";
+    return `<div class="t-row fail"><i class="t-dot fail"></i><div class="t-main">${what}${detail}
+        ${t.text ? `<details><summary class="faint small">traceback</summary><pre class="t-tb">${esc(t.text)}</pre></details>` : ""}</div>
+      ${loc ? `<button class="link small" data-loc="${esc(loc.file)}:${loc.line}" title="${esc(loc.file)}">строка ${loc.line}</button>` : ""}</div>`;
+  };
+  const head = `<div class="t-head"><span class="${check.passed === check.total ? "ok" : "err"}"><b>${check.passed}/${check.total}</b> прошли</span>${broken}<span class="grow"></span>
+    <span class="faint small">${check.ms != null ? `проверка ${(check.ms / 1000).toFixed(1)} с` : ""}${opts.checkNo ? ` · ${opts.checkNo}-я в этой попытке` : ""}</span>
+    <div class="seg" style="margin:0"><button data-tf="all" class="sel">Все</button><button data-tf="failed">Упавшие</button></div></div>`;
+  return head + groups.map(g => {
+    const bad = g.tests.filter(failed), good = g.tests.filter(t => t.status === "pass"), other = g.tests.filter(t => !failed(t) && t.status !== "pass");
+    const n = `<span class="t-count ${bad.length ? "fail" : "ok"}">${good.length}/${g.tests.length}</span>`;
+    return `<details class="t-group ${bad.length ? "has-fail" : "all-ok"} ${g.mode ? "t-modes" : ""}" ${bad.length ? "open" : ""}>
+      <summary>${g.mode ? "" : '<i class="t-sq"></i>'}<b class="${g.mono ? "mono" : ""}">${esc(g.title)}</b>${n}<span class="faint small">${esc(g.note)}</span></summary>
+      ${bad.map(one).join("")}
+      ${other.map(t => `<div class="t-row"><i class="t-dot skip"></i><div class="t-main"><b class="mono">${esc(t.name)}</b> <span class="faint">— ${esc(t.status)}</span></div></div>`).join("")}
+      ${good.length ? `<div class="t-row ok"><i class="t-dot ok"></i><div class="t-main faint">${bad.length ? "ещё " : "все "}${good.length} ${plural(good.length, "прошёл", "прошли", "прошли")}: <span class="mono">${good.map(t => esc(t.name)).join(", ")}</span></div></div>` : ""}
+    </details>`;
+  }).join("");
+}
+
+// версия Python и пакеты окружения (кэш на сессию)
+const pyInfoCache = {};
+function pythonInfo(path) {
+  return pyInfoCache[path] ||= api("/api/python/check", { method: "POST", json: { path } }).catch(() => null);
 }
 
 function diffHtml(text) {
@@ -466,6 +509,12 @@ const ICON = {
   lock: svg('<rect x="3.5" y="7" width="9" height="6.5" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/>'),
   upload: svg('<path d="M8 11V3M4.5 6.5 8 3l3.5 3.5M3 13h10"/>'),
   flask: svg('<path d="M6 2h4M6.5 2v4L3 13h10L9.5 6V2"/>'),
+  files: svg('<path d="M4 2.5h5l3 3v8H4z"/><path d="M9 2.5v3h3"/>'),
+  table: svg('<rect x="2.5" y="3" width="11" height="10" rx="1.2"/><path d="M2.5 6.5h11M2.5 9.8h11M6.5 6.5V13"/>'),
+  image: svg('<rect x="2.5" y="3" width="11" height="10" rx="1.2"/><circle cx="6" cy="6.5" r="1.2"/><path d="m3 12 3.5-3.5 2.5 2.5 1.5-1.5 2.5 2.5"/>'),
+  panel: svg('<rect x="2.5" y="3" width="11" height="10" rx="1.2"/><path d="M6.5 3v10"/>'),
+  clock: svg('<circle cx="8" cy="8.5" r="5"/><path d="M8 6v2.7l1.8 1.1M6.5 2h3"/>'),
+  arrowUp: svg('<path d="M8 13V3.5M4 7.5l4-4 4 4"/>'),
   blocks: svg('<rect x="5.5" y="2.5" width="5" height="4" rx="1"/><rect x="2.5" y="9.5" width="5" height="4" rx="1"/><rect x="8.5" y="9.5" width="5" height="4" rx="1"/>'),
   // уровни: кирпичик — столбик, блок — 2×2, стена — 3×2
   brick: svg('<rect x="6.5" y="3" width="3" height="4" rx=".6" fill="currentColor" stroke="none"/><rect x="6.5" y="9" width="3" height="4" rx=".6" fill="currentColor" stroke="none"/>'),
@@ -500,3 +549,6 @@ function plural(n, one, few, many) {
   const a = Math.abs(n) % 100, b = a % 10;
   return a > 10 && a < 20 ? many : b === 1 ? one : b >= 2 && b <= 4 ? few : many;
 }
+
+// уровень задачи (с сервера): кирпичик / блок / стена
+function taskLevel(t) { return t?.level || "brick"; }

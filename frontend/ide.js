@@ -1,10 +1,10 @@
 // Мини-IDE: описание | редактор (Monaco) + консоль | файлы. Используется для попытки и для редактора задачи.
 /* global monaco */
 
-const LAYOUT_KEY = "ide-layout-v1";
+const LAYOUT_KEY = "ide-layout-v2";  // v2: размеры по макету «Графит»
 function loadLayout() {
-  try { return { left: 360, right: 260, bottom: 240, lc: false, rc: false, bc: false, ...JSON.parse(localStorage.getItem(LAYOUT_KEY) || "{}") }; }
-  catch { return { left: 360, right: 260, bottom: 240, lc: false, rc: false, bc: false }; }
+  try { return { left: 340, right: 248, bottom: 240, lc: false, rc: false, bc: false, ...JSON.parse(localStorage.getItem(LAYOUT_KEY) || "{}") }; }
+  catch { return { left: 340, right: 248, bottom: 240, lc: false, rc: false, bc: false }; }
 }
 function saveLayout(l) { try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(l)); } catch { /* приватный режим */ } }
 
@@ -33,18 +33,24 @@ async function openIDE(root, cfg) {
   root.innerHTML = `
     <div class="ide">
       <div class="ide-top">
-        <a href="${cfg.back || "#/tasks"}" class="icon-btn" title="назад">←</a>
-        <span class="title">${esc(cfg.title)}</span>
+        <a href="${cfg.back || "#/tasks"}" class="icon-btn ide-back" title="назад">←</a>
+        <div class="ide-title">
+          ${cfg.crumbs ? `<div class="crumbs">${cfg.crumbs}</div>` : ""}
+          <div class="ide-name"><span class="title">${esc(cfg.heading || cfg.title)}</span>${cfg.badges || ""}</div>
+        </div>
         <span class="grow"></span>
-        ${cfg.run && !cfg.readonly ? `<select id="ide-main" class="small" title="что запускает «Запустить»"></select>
-          <button id="ide-run" class="success" title="Ctrl/Cmd+Enter">▶ Запустить</button>
-          <button id="ide-stop" class="ghost" title="остановить запуск или тесты">■ Стоп</button>` : ""}
-        ${cfg.check && !cfg.readonly ? `<button id="ide-check" class="${cfg.checkClass || "ghost"}" title="${esc(cfg.checkTitle || "прогнать тесты, попытка не засчитывается")}">${esc(cfg.checkLabel || "✓ Проверить")}</button>` : ""}
+        <span class="ide-meta muted" id="ide-meta">${cfg.meta || ""}</span>
         <span id="ide-buttons" class="row"></span>
+        ${!cfg.readonly ? `<div class="more"><button class="icon-btn" id="ide-more" title="ещё">⋯</button><div class="menu" id="ide-menu" hidden>
+            ${cfg.run ? `<label class="menu-row">Запускать<select id="ide-main" title="что запускает «Запустить»"></select></label>` : ""}<div id="ide-menu-extra"></div></div></div>` : ""}
+        ${cfg.run && !cfg.readonly ? `<button id="ide-stop" class="ghost" title="остановить запуск или тесты">${ICON.stop}Остановить</button>
+          <button id="ide-run" class="ghost" title="запустить (Ctrl/Cmd+Enter)">${ICON.play}Запустить<kbd>⌘↵</kbd></button>` : ""}
+        ${cfg.check && !cfg.readonly ? `<button id="ide-check" class="${cfg.checkClass || "ghost"}" title="${esc(cfg.checkTitle || "прогнать тесты, попытка не засчитывается")} (Shift+Ctrl/Cmd+Enter)">${ICON.check}${esc((cfg.checkLabel || "Проверить").replace(/^✓\s*/, ""))}<kbd>⇧⌘↵</kbd></button>` : ""}
+        <span id="ide-submit" class="row"></span>
       </div>
       <div class="ide-body" id="ide-body">
         <section class="pane" id="p-left">
-          <div class="pane-head"><div class="tabs" id="left-tabs"></div><button class="icon-btn collapse" data-collapse="lc" title="свернуть">⟨</button></div>
+          <div class="pane-head"><div class="tabs" id="left-tabs"></div><button class="icon-btn collapse" data-collapse="lc" title="свернуть"></button></div>
           <div class="pane-body" id="left-body" style="padding:14px 16px"></div>
         </section>
         <div class="gutter v" data-g="left"></div>
@@ -75,7 +81,9 @@ async function openIDE(root, cfg) {
         <div class="gutter v" data-g="right"></div>
         <section class="pane" id="p-right">
           <div class="pane-head"><span class="label hide-collapsed" style="margin:0 6px">Файлы</span><span class="grow hide-collapsed"></span>
-            <button class="icon-btn collapse" data-collapse="rc" title="свернуть">⟩</button></div>
+            <button class="icon-btn collapse" data-collapse="rc" title="свернуть">⟩</button>
+            <div class="rail" id="rail"><button class="icon-btn" data-rail="tree" title="файлы">${ICON.files}</button>
+              <button class="icon-btn" data-rail="data" title="данные">${ICON.table}</button><button class="icon-btn" data-rail="results" title="results/">${ICON.image}</button></div></div>
           <div class="pane-body" style="display:flex;flex-direction:column">
             <div class="tree-tools">
               ${cfg.readonly ? "" : `<button class="icon-btn" data-tt="file" title="новый файл">＋</button><button class="icon-btn" data-tt="dir" title="новая папка">▸＋</button>
@@ -84,10 +92,15 @@ async function openIDE(root, cfg) {
               <span class="grow"></span><button class="icon-btn" data-tt="refresh" title="обновить">↻</button>
               <input type="file" id="tree-up" multiple hidden></div>
             <div class="tree" id="tree" style="flex:1;overflow:auto"></div>
+            <div class="data-prev" id="data-prev" data-sec="data" hidden></div>
+            <div class="res-prev" id="res-prev" data-sec="results" hidden></div>
+            ${cfg.hiddenTests ? `<div class="faint small" style="padding:6px 12px">${ICON.lock} <span class="mono">tests/</span> скрыты</div>` : ""}
             <div class="small muted" id="data-note" style="padding:6px 10px;border-top:1px solid var(--line)"></div>
           </div>
         </section>
       </div>
+      <div class="statusbar" id="statusbar"><span id="sb-py"></span><span id="sb-pk" class="faint"></span><span id="sb-rule"></span>
+        <span class="grow"></span><span id="sb-pos"></span><span>Пробелы: 4</span><span id="sb-saved"></span></div>
     </div>`;
 
   const ide = { cfg, tabs: [], current: null, models: {}, savedVersion: {}, alive: true, lastCheck: null, outRuns: 0 };
@@ -98,19 +111,30 @@ async function openIDE(root, cfg) {
     $("#p-left", root).classList.toggle("collapsed", L.lc);
     $("#p-right", root).classList.toggle("collapsed", L.rc);
     $("#p-bottom", root).classList.toggle("collapsed", L.bc);
-    const narrow = window.innerWidth < 900;  // телефон/узкое окно: панели друг под другом
+    const narrow = window.innerWidth < 900;  // телефон: панели друг под другом
+    const railed = !narrow && window.innerWidth <= 1360 && !ide.railOpen;  // ≤1360 px: файлы — рейка 40 px с иконками
+    $("#p-right", root).classList.toggle("collapsed", L.rc || railed);
     body.classList.toggle("stacked", narrow);
-    body.style.gridTemplateColumns = narrow ? "1fr" : `${L.lc ? 40 : L.left}px 8px minmax(300px, 1fr) 8px ${L.rc ? 40 : L.right}px`;
-    center.style.gridTemplateRows = `minmax(120px, 1fr) 8px ${L.bc ? 38 : L.bottom}px`;
+    body.style.gridTemplateColumns = narrow ? "1fr" : `${L.lc ? 40 : L.left}px 1px minmax(300px, 1fr) 1px ${L.rc || railed ? 40 : L.right}px`;
+    center.style.gridTemplateRows = `minmax(120px, 1fr) 1px ${L.bc ? 40 : L.bottom}px`;
     $$("[data-collapse]", root).forEach(b => {
       const k = b.dataset.collapse, c = L[k];
-      b.textContent = k === "lc" ? (c ? "⟩" : "⟨") : k === "rc" ? (c ? "⟨" : "⟩") : (c ? "⌃" : "⌄");
+      if (k === "bc") b.textContent = c ? "⌃" : "⌄"; else b.innerHTML = ICON.panel;
       b.title = c ? "развернуть" : "свернуть";
     });
     saveLayout(L);
     ide.editor && ide.editor.layout();
   }
-  $$("[data-collapse]", root).forEach(b => b.onclick = () => { L[b.dataset.collapse] = !L[b.dataset.collapse]; applyLayout(); });
+  $$("[data-collapse]", root).forEach(b => b.onclick = () => {
+    if (b.dataset.collapse === "rc" && ide.railOpen) { ide.railOpen = false; return applyLayout(); }
+    L[b.dataset.collapse] = !L[b.dataset.collapse]; applyLayout();
+  });
+  $$("[data-rail]", root).forEach(b => b.onclick = () => {
+    if (window.innerWidth <= 1360) ide.railOpen = true; else L.rc = false;
+    applyLayout();
+    const target = { data: '[data-sec="data"]', results: '[data-sec="results"]' }[b.dataset.rail];
+    if (target) $(target, root)?.scrollIntoView({ block: "start" });
+  });
   $$(".gutter", root).forEach(g => g.onpointerdown = e => {
     e.preventDefault();
     g.classList.add("drag");
@@ -137,10 +161,16 @@ async function openIDE(root, cfg) {
     leftBody.innerHTML = "";
     t.render(leftBody, ide);
   };
-  leftTabs.innerHTML = cfg.leftTabs.map(t => `<button data-lt="${t.id}">${esc(t.label)}</button>`).join("");
+  leftTabs.innerHTML = cfg.leftTabs.map(t => `<button data-lt="${t.id}">${t.html ? t.label : esc(t.label)}</button>`).join("");
   $$("button", leftTabs).forEach(b => b.onclick = () => { L.lc = false; applyLayout(); ide.showLeft(b.dataset.lt); });
   ide.showLeft(cfg.leftTab || cfg.leftTabs[0].id);
-  cfg.buttons && cfg.buttons($("#ide-buttons", root), ide);
+  cfg.buttons && cfg.buttons($("#ide-buttons", root), ide, $("#ide-submit", root), $("#ide-menu-extra", root));
+  const more = $("#ide-more", root);
+  if (more) {
+    more.onclick = e => { e.stopPropagation(); $("#ide-menu", root).hidden = !$("#ide-menu", root).hidden; };
+    const close = e => { if (!document.body.contains(more)) return document.removeEventListener("click", close); if (!e.target.closest("#ide-menu")) $("#ide-menu", root).hidden = true; };
+    document.addEventListener("click", close);
+  }
 
   // ---------- редактор ----------
   await loadMonaco();
@@ -149,6 +179,42 @@ async function openIDE(root, cfg) {
     minimap: { enabled: false }, scrollBeyondLastLine: false, tabSize: 4, insertSpaces: true, renderWhitespace: "selection",
     wordBasedSuggestions: "allDocuments", readOnly: !!cfg.readonly, model: null, padding: { top: 8 },
   });
+  // ---------- строка состояния: Python, пакеты, правило режима, курсор, «сохранено» ----------
+  ide.editor.onDidChangeCursorPosition(e => { $("#sb-pos", root).textContent = `Стр ${e.position.lineNumber}, кол ${e.position.column}`; });
+  if (cfg.rule) $("#sb-rule", root).innerHTML = cfg.rule;
+  if (cfg.python) pythonInfo(cfg.python).then(info => {
+    if (!info || !document.body.contains(root.firstElementChild)) return;
+    const env = info.python.includes(".venv") ? " · .venv" : "";
+    $("#sb-py", root).innerHTML = `<i class="sb-dot ${info.pytest ? "ok" : "fail"}"></i>Python ${esc(info.version)}${env}`;
+    $("#sb-py", root).title = info.python + (info.pytest ? "" : " — нет pytest: " + (info.fix || ""));
+    $("#sb-pk", root).textContent = info.packages.filter(x => x !== "pytest").join(" · ");
+  });
+
+  // ---------- строка с ошибкой прямо в редакторе: «test_x: ожидалось …, получено …» ----------
+  const errDecos = {};
+  ide.markErrors = check => {
+    for (const [p, ids] of Object.entries(errDecos)) { ide.models[p]?.deltaDecorations(ids, []); delete errDecos[p]; }
+    const files = Object.keys(ide.models), code = Object.fromEntries(files.map(f => [f, ide.models[f].getValue()]));
+    const byFile = {};
+    for (const t of arr(check?.tests)) {
+      if (!["fail", "error"].includes(t.status)) continue;
+      const loc = errorLine(t.text, files, code);
+      if (!loc || byFile[loc.file]?.some(x => x.line === loc.line)) continue;
+      const eg = expectedGot(t.message, t.text);
+      const note = eg ? `${t.name}: ожидалось ${eg.expected}, получено ${eg.got}` : `${t.name}: ${(t.message || "").split("\n")[0].slice(0, 90)}`;
+      (byFile[loc.file] ||= []).push({ line: loc.line, note });
+    }
+    for (const [f, marks] of Object.entries(byFile)) {
+      const mdl = ide.models[f];
+      errDecos[f] = mdl.deltaDecorations([], marks.map(m => ({ range: new monaco.Range(m.line, 1, m.line, mdl.getLineMaxColumn(m.line)),  // подпись — в конце строки
+        options: { isWholeLine: true, className: "err-line", linesDecorationsClassName: "err-line-glyph",
+          after: { content: `  ${m.note}`, inlineClassName: "err-inline" } } })));
+    }
+    ide.errFiles = new Set(Object.keys(byFile));
+    renderTabs();
+    refreshTree();
+  };
+
   const uri = p => monaco.Uri.parse(`file:///${cfg.base.replace(/\W+/g, "_")}/${p}`);
   const lang = p => LANG[p.split(".").pop().toLowerCase()] || "plaintext";
   const rawUrl = p => `${cfg.base}/raw/${p.split("/").map(encodeURIComponent).join("/")}`;
@@ -178,14 +244,19 @@ async function openIDE(root, cfg) {
       await api(`${cfg.base}/file`, { method: "PUT", json: { path, content: m.getValue() } });
       ide.savedVersion[path] = v;
       renderTabs();
+      $("#sb-saved", root).textContent = `сохранено ${new Date().toLocaleTimeString("ru", { hour: "2-digit", minute: "2-digit" })}`;
     } catch (e) { toast(`не сохранено ${path}: ${e.message}`, true); }
   };
   ide.saveAll = () => Promise.all(Object.keys(ide.models).map(p => ide.save(p)));
 
   function renderTabs() {
-    $("#filetabs", root).innerHTML = ide.tabs.map(t => `<div class="filetab ${t.path === ide.current ? "active" : ""}" data-p="${esc(t.path)}" title="${esc(t.path)}">
-        ${esc(t.path.split("/").pop())}${cfg.roles?.[t.path] === "given" ? '<span class="role">дан</span>' : ""}${cfg.tabNote ? cfg.tabNote(t.path) : ""}
-        ${isDirty(t.path) ? '<span class="dirty" title="не сохранено"></span>' : ""}<span class="x" data-close="${esc(t.path)}">×</span></div>`).join("");
+    $("#filetabs", root).innerHTML = ide.tabs.map(t => {
+      const fm = cfg.fileMode && cfg.fileMode(t.path);
+      const ico = fm ? `<span class="mi mi-${fm === "library" ? "lib" : "scr"}">${ICON[MODE_ICON[fm]]}</span>` : "";
+      return `<div class="filetab ${t.path === ide.current ? "active" : ""}" data-p="${esc(t.path)}" title="${esc(t.path)}">
+        ${ico}${esc(t.path.startsWith("bricks/") ? t.path : t.path.split("/").pop())}${cfg.roles?.[t.path] === "given" ? '<span class="role">эталон</span>' : ""}${cfg.tabNote ? cfg.tabNote(t.path) : ""}
+        ${isDirty(t.path) ? '<span class="dirty" title="не сохранено"></span>' : ""}<span class="x" data-close="${esc(t.path)}">×</span></div>`;
+    }).join("");
     $$(".filetab", root).forEach(el => el.onclick = e => {
       if (e.target.dataset.close) return closeTab(e.target.dataset.close);
       ide.open(el.dataset.p);
@@ -287,6 +358,7 @@ async function openIDE(root, cfg) {
   // Ctrl/Cmd+S — сохранить, Ctrl/Cmd+Enter — запустить текущий файл
   ide.editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => ide.save());
   ide.editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => ide.run());
+  ide.editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.Enter, () => ide.check());
   const onKey = e => {
     if (!document.body.contains(root.firstElementChild)) return document.removeEventListener("keydown", onKey);
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") { e.preventDefault(); ide.saveAll(); }
@@ -354,14 +426,29 @@ async function openIDE(root, cfg) {
       const jobId = await cfg.check();
       const r = await followJob(jobId, outs => { renderOutputs($("[data-o]", tv), outs, rawUrl); scrollDown(); }, () => ide.alive);
       ide.lastCheck = r.result?.check;
-      tv.innerHTML = testsHtml(ide.lastCheck) + `<details class="mt"><summary class="muted small">вывод pytest</summary><div data-o></div></details>`;
+      ide.checkCount = (ide.checkCount || cfg.checks || 0) + 1;
+      ide.showTests(ide.lastCheck);
+      tv.insertAdjacentHTML("beforeend", `<details class="mt pytest-out"><summary class="muted small">вывод pytest</summary><div data-o></div></details>`);
+      ide.markErrors(ide.lastCheck);
       renderOutputs($("[data-o]", tv), r.outputs, rawUrl);
       cfg.onCheck && cfg.onCheck(ide.lastCheck, r.result);
       return ide.lastCheck;
     } catch (e) { tv.innerHTML = `<p class="err">${esc(e.message)}</p>`; }
     finally { if (btn) btn.disabled = false; }
   };
-  ide.showTests = check => { $('[data-cv="tests"]', root).innerHTML = testsHtml(check); };
+  // тесты: по кирпичикам, отдельно «Проверки режима»; фильтр «Все / Упавшие»; «строка N» — к месту в коде
+  ide.showTests = check => {
+    const tv = $('[data-cv="tests"]', root);
+    const files = Object.keys(ide.models), code = Object.fromEntries(files.map(f => [f, ide.models[f].getValue()]));
+    tv.innerHTML = testsHtml(check, { files, code, grouped: true, checkNo: ide.checkCount });
+    const head = $("#con-tabs [data-ct=tests]", root);
+    if (head) head.innerHTML = `Тесты <span class="faint small">${check ? testsCount(check) : "—"}</span>`;
+    $$("[data-loc]", tv).forEach(b => b.onclick = () => {
+      const [f, line] = b.dataset.loc.split(":");
+      ide.open(f).then(() => { ide.editor.revealLineInCenter(+line); ide.editor.setPosition({ lineNumber: +line, column: 1 }); });
+    });
+    $$("[data-tf]", tv).forEach(b => b.onclick = () => { tv.classList.toggle("only-failed", b.dataset.tf === "failed"); $$("[data-tf]", tv).forEach(x => x.classList.toggle("sel", x === b)); });
+  };
 
   const replIn = $("#repl-in textarea", root);
   if (replIn) {
@@ -411,9 +498,11 @@ async function openIDE(root, cfg) {
       row.className = "trow" + (it.path === selected ? " sel" : "");
       row.style.paddingLeft = 8 + depth * 14 + "px";
       const open = it.dir && expanded.has(it.path);
-      row.innerHTML = `<span class="ico ${it.kind}">${it.dir ? (open ? "▾" : "▸") : FILE_ICON[it.kind] || "·"}</span>
-        <span class="name" title="${esc(it.link ? `${it.path} → ${it.link}` : it.path)}">${esc(it.name)}${it.link ? ' <span class="muted">⛓</span>' : ""}</span>
-        <span class="muted small">${it.dir ? "" : fmtSize(it.size)}</span>
+      const fm = !it.dir && cfg.fileMode && cfg.fileMode(it.path);
+      const mark = ide.errFiles?.has(it.path) ? '<i class="t-mark fail" title="здесь упал тест"></i>' : isDirty(it.path) ? '<i class="t-mark dirty" title="не сохранено"></i>' : "";
+      row.innerHTML = `<span class="ico ${it.kind}">${it.dir ? (open ? "▾" : "▸") : it.kind === "python" ? `<i class="fsq ${fm ? `m-${fm}` : ""}"></i>` : FILE_ICON[it.kind] || "·"}</span>
+        <span class="name" title="${esc(it.link ? `${it.path} → ${it.link}` : it.path)}">${esc(it.name)}${it.dir ? "/" : ""}${it.link ? ' <span class="muted">⛓</span>' : ""}${cfg.roles?.[it.path] === "given" ? ' <span class="faint small">эталон</span>' : ""}</span>
+        ${mark || `<span class="faint small">${it.dir ? "" : fmtSize(it.size)}</span>`}
         ${cfg.readonly ? "" : `<span class="acts"><button data-a="ren" title="переименовать">✎</button><button data-a="del" title="удалить">✕</button></span>`}`;
       el.appendChild(row);
       const kids = document.createElement("div");
@@ -428,7 +517,8 @@ async function openIDE(root, cfg) {
         if (it.dir) {
           if (expanded.has(it.path)) { expanded.delete(it.path); kids.innerHTML = ""; row.querySelector(".ico").textContent = "▸"; }
           else { expanded.add(it.path); row.querySelector(".ico").textContent = "▾"; await renderDir(kids, it.path, depth + 1); }
-        } else ide.open(it.path);
+        } else if (it.kind === "table") { previewTable(it.path); ide.open(it.path); }
+        else ide.open(it.path);
       };
       row.ondragover = e => { if (it.dir) { e.preventDefault(); e.stopPropagation(); row.classList.add("sel"); } };
       row.ondragleave = () => row.classList.remove("sel");
@@ -444,6 +534,28 @@ async function openIDE(root, cfg) {
     const scroll = tree.scrollTop;
     await renderDir(tree, "", 0);
     tree.scrollTop = scroll;
+    renderResults();
+  }
+  // превью csv в панели файлов: имя, число строк, первые строки
+  async function previewTable(path) {
+    const box = $("#data-prev", root);
+    box.hidden = false;
+    box.innerHTML = '<div class="faint small spinner" style="padding:8px">читаю</div>';
+    try {
+      const t = await api(`${cfg.base}/table?path=${encodeURIComponent(path)}`);
+      const cols = arr(t.columns).slice(0, 3), rows = arr(t.rows).slice(0, 5);
+      box.innerHTML = `<div class="dp-head"><span class="mono">${esc(path.split("/").pop())}</span><span class="faint">${t.n_rows != null ? `${Number(t.n_rows).toLocaleString("ru")} ${plural(t.n_rows, "строка", "строки", "строк")}` : ""}</span></div>
+        <table class="dp"><tr>${cols.map(c => `<th>${esc(c.name ?? c)}</th>`).join("")}</tr>${rows.map(r => `<tr>${cols.map((c, i) => `<td>${esc(String(Array.isArray(r) ? r[i] : r[c.name ?? c] ?? ""))}</td>`).join("")}</tr>`).join("")}</table>`;
+    } catch (e) { box.innerHTML = `<div class="err small" style="padding:8px">${esc(e.message)}</div>`; }
+  }
+  // results/: миниатюры картинок, клик — открыть
+  async function renderResults() {
+    const box = $("#res-prev", root);
+    let items = [];
+    try { items = (await api(`${cfg.base}/files?path=results`)).filter(f => f.kind === "image"); } catch { items = []; }
+    box.hidden = !items.length;
+    box.innerHTML = `<div class="label" style="margin:0 0 6px">results/</div><div class="thumbs">${items.slice(0, 6).map(f => `<button class="thumb" data-img="${esc(f.path)}"><img src="${rawUrl(f.path)}?t=${f.mtime}" alt=""><span class="mono">${esc(f.name)}</span></button>`).join("")}</div>`;
+    $$("[data-img]", box).forEach(b => b.onclick = () => ide.open(b.dataset.img));
   }
   ide.refreshTree = refreshTree;
   async function renameItem(it) {

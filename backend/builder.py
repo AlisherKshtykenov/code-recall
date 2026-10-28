@@ -32,12 +32,8 @@ def ref_tests(version) -> dict:
     return out
 
 
-def level_of(files: dict) -> str:
-    """Уровень по размеру карточки: brick — без зависимостей, block — из кирпичиков, wall — стена (пайплайн с данными)."""
-    meta = taskfs.read_meta(files)
-    if "стена" in (meta.get("tags") or []) or meta.get("level") == "wall":
-        return "wall"
-    return "block" if bricks.deps_of(files) else "brick"
+level_of = bricks.level_of
+
 
 
 def category_of(db, t: Task) -> str:
