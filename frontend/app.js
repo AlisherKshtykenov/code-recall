@@ -16,7 +16,7 @@ function paintStreak() {
 paintStreak();
 
 const routes = { today: viewToday, tasks: viewTasks, task: viewTask, attempt: viewAttempt, edit: viewEdit,
-                 journal: viewJournal, review: viewReview, stats: viewStats, settings: viewSettings, assemble: viewAssemble, map: viewMap, builder: viewBuilder };
+                 journal: viewJournal, review: viewReview, stats: viewStats, settings: viewSettings, assemble: viewAssemble, map: viewMap, builder: viewBuilder, help: viewHelp };
 let lastHash = location.hash, skipRoute = false;
 function route() {
   if (skipRoute) { skipRoute = false; return; }
@@ -77,7 +77,7 @@ async function viewToday() {
       ${(sc => sc != null ? `<span class="score-b ${sc >= 70 ? "ok" : sc >= 50 ? "warn" : "err"}">${sc}</span>` : "")(opts.scoreOf?.(r))}
       ${opts.button ? `<button class="small" data-go="${r.id}" data-mode="${r.mode}">${opts.button}</button>` : `<span class="chev" data-go="${r.id}" data-mode="${r.mode}">${ICON.chevron}</span>`}</div>`;
   };
-  const card = (title, dot, items, opts = {}) => items.length ? `<section class="tcard"><header><i class="dot-${dot}"></i><h2>${title}</h2><span class="faint">${items.length}</span>
+  const card = (title, dot, items, opts = {}) => items.length ? `<section class="tcard"><header><i class="dot-${dot}"></i><h2>${title}</h2><span class="faint">${opts.total ?? items.length}</span>
       ${opts.note ? `<span class="grow"></span><span class="faint small">${opts.note}</span>` : ""}</header>${items.map(r => row(r, opts)).join("")}</section>` : "";
   const cal = arr(st?.calendar).slice(-12);
   const today = new Date();
@@ -103,7 +103,7 @@ async function viewToday() {
       ${card("На сегодня", "due", due, { cls: "due" })}
     </div><div>
       ${card("Слабые кирпичики", "fail", weak, { compact: true, inline: true, button: "Повторить", note: "из ошибок в больших задачах", scoreOf: r => r.last_score })}
-      ${card("Новые", "new", t.new.slice(0, 8), { mini: true, inline: true })}${t.new.length > 8 ? `<p class="faint small">и ещё ${t.new.length - 8} — в <a href="#/tasks">Задачах</a></p>` : ""}
+      ${card("Новые", "new", t.new.slice(0, 8), { mini: true, inline: true, total: t.new.length })}${t.new.length > 8 ? `<p class="faint small">и ещё ${t.new.length - 8} — в <a href="#/tasks">Задачах</a></p>` : ""}
       ${t.upcoming.length ? `<details class="tcard"><summary><i class="dot-plan"></i><h2>Ближайшие 7 дней</h2><span class="faint">${t.upcoming.length}</span></summary>${t.upcoming.map(r => row(r, { cls: "solved" })).join("")}</details>` : ""}
       ${todo.length ? '<p class="faint small">Порядок: сначала кирпичики, потом собранное из них; по каждой задаче — сначала применение, потом устройство.</p>' : ""}
     </div></div></div>`;
@@ -553,7 +553,8 @@ async function reportPage(a) {
       <div class="card"><div class="muted">Оценка по попыткам</div><div id="rp-h1"></div></div>
       <div class="card"><div class="muted">Время по попыткам</div><div id="rp-h2"></div></div>
     </div>
-    ${(rep.warnings || []).length ? `<div class="card"><ul class="plain">${rep.warnings.map(x => `<li class="${x.level}">${esc(x.text)}</li>`).join("")}</ul></div>` : ""}
+    ${(rep.warnings || []).length ? `<div class="card"><ul class="plain">${rep.warnings.slice(0, 5).map(x => `<li class="${x.level}">${esc(x.text)}</li>`).join("")}</ul>
+      ${rep.warnings.length > 5 ? `<details><summary class="faint small">ещё ${rep.warnings.length - 5}</summary><ul class="plain">${rep.warnings.slice(5).map(x => `<li class="${x.level}">${esc(x.text)}</li>`).join("")}</ul></details>` : ""}</div>` : ""}
     ${written.map((f, i) => `<div class="card rp-diff"><div class="rp-dh"><b>${esc(f)}</b><span class="muted small" id="rp-sum-${i}"></span><span class="grow"></span></div><div class="rp-dv" id="rp-d-${i}"></div></div>`).join("")}
     ${rep.judge && rep.judge !== "pending" && rep.judge.ok ? `<div class="card"><div class="row"><i class="t-dot fail"></i><b>${esc(rep.judge.comment)}</b></div>
       ${rep.judge.differences.length ? `<ul class="plain">${rep.judge.differences.map(d => `<li>${esc(d)}</li>`).join("")}</ul>` : ""}<div class="faint small">${esc(rep.judge.provider)} · ${esc(rep.judge.model)} · на оценку не влияет</div></div>`
@@ -1089,6 +1090,12 @@ async function viewEdit(id) {
 // ---------------- Статистика ----------------
 async function viewStats() {
   const [st, all, mp] = await Promise.all([api("/api/stats"), apiList("/api/tasks"), api("/api/map").catch(() => ({ bricks: {}, categories: [] }))]);
+  if (!st.attempts) {
+    view.innerHTML = `<div class="stats-page"><h1>Статистика</h1><div class="card">${emptyState({ icon: "flask", title: "Статистики пока нет",
+      text: "Здесь появятся серия дней, активность, «библиотека против с нуля» и слабые места — после первой сданной попытки.",
+      actions: '<a class="btn primary" href="#/today">К задачам на сегодня</a>' })}</div></div>`;
+    return;
+  }
   const s = st.streak, maxC = Math.max(1, ...st.calendar.map(d => d.count));
   const month = s.best_end ? new Date(s.best_end).toLocaleDateString("ru", { month: "long" }).replace(/^./, c => c) : "";
   const monthIn = month ? `в ${{ январь: "январе", февраль: "феврале", март: "марте", апрель: "апреле", май: "мае", июнь: "июне", июль: "июле", август: "августе", сентябрь: "сентябре", октябрь: "октябре", ноябрь: "ноябре", декабрь: "декабре" }[month] || month}` : "";
@@ -1229,4 +1236,19 @@ async function viewSettings() {
   };
   $$("[data-th]").forEach(b => b.onclick = () => { setTheme(b.dataset.th); $$("[data-th]").forEach(x => x.classList.toggle("sel", x === b)); paintTheme(); });
   $$("[data-fs]").forEach(b => b.onclick = () => { store.set("code.fs", +b.dataset.fs); $$("[data-fs]").forEach(x => x.classList.toggle("sel", x === b)); });
+}
+
+// ---------------- Инструкция (кнопка «?»): docs/ИНСТРУКЦИЯ.md со снимками ----------------
+const anchor = text => text.trim().toLowerCase().replace(/[^\p{L}\p{N}\s-]/gu, "").replace(/\s/g, "-");
+async function viewHelp(section) {
+  const r = await fetch("/guide/ИНСТРУКЦИЯ.md");
+  if (!r.ok) { view.innerHTML = `<div class="card">${emptyState({ icon: "files", title: "Инструкции нет", text: "Файл docs/ИНСТРУКЦИЯ.md не найден." })}</div>`; return; }
+  const text = (await r.text()).replace(/\]\(img\//g, "](/guide/img/");  // картинки — из docs/img
+  view.innerHTML = `<div class="help-page card"><div class="md">${md(text)}</div></div>`;
+  $$(".help-page h2, .help-page h3").forEach(h => { h.id = anchor(h.textContent); });
+  $$(".help-page a[href^='#']").forEach(a => {
+    const id = decodeURIComponent(a.getAttribute("href").slice(1));
+    if (document.getElementById(id)) a.onclick = e => { e.preventDefault(); document.getElementById(id).scrollIntoView(); };
+  });
+  if (section) document.getElementById(decodeURIComponent(section))?.scrollIntoView();
 }
