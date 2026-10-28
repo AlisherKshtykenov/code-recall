@@ -131,7 +131,7 @@ async function viewAssemble(id, mode) {
   function render() {
     const nodes = opt.nodes;
     view.innerHTML = `<div class="row" style="margin-bottom:6px"><a href="#/task/${id}" class="muted">← ${esc(t.title)}</a></div>
-      <div class="row" style="margin-bottom:12px"><h1 style="margin:0">Сборка перед стартом</h1><span class="badge mode-${mode}">${MODE_NAME[mode]}</span><span class="grow"></span>
+      <div class="row" style="margin-bottom:12px"><h1 style="margin:0">Сборка перед стартом</h1>${modeBadge(mode)}<span class="grow"></span>
         <button class="ghost" data-all="ref">всё эталоном</button><button class="ghost" data-all="self_library">всё сам · библиотекой</button>
         <button class="ghost" data-all="self_scratch">всё сам · с нуля</button>
         ${opt.has_last ? '<button class="ghost" id="as-last">как в прошлый раз</button>' : ""}

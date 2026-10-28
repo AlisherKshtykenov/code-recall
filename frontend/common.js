@@ -288,7 +288,7 @@ function testsHtml(check, opts = {}) {
       ${check.ms != null ? `<span class="muted small">${(check.ms / 1000).toFixed(1)} с</span>` : ""}</div>`
     + check.tests.map(t => {
       const [cls, ico] = TEST_ICON[t.status] || ["muted", "?"];
-      return `<div class="test-row"><span class="${cls}">${ico}</span><span>${t.mode ? `<span class="badge mode-${t.mode}">${MODE_NAME[t.mode] || t.mode}</span> ` : ""}${t.brick ? `<span class="badge" title="${esc(t.brick_title || "")}">кирпичик ${esc(t.brick)}</span> ` : ""}<b>${esc(t.name)}</b> <span class="muted small">${esc(t.file)}</span></span>
+      return `<div class="test-row"><span class="${cls}">${ico}</span><span>${t.mode ? `${modeBadge(t.mode, { short: true })} ` : ""}${t.brick ? `<span class="badge" title="${esc(t.brick_title || "")}">кирпичик ${esc(t.brick)}</span> ` : ""}<b>${esc(t.name)}</b> <span class="muted small">${esc(t.file)}</span></span>
         <span class="muted small">${t.time ? t.time.toFixed(2) + " с" : ""}</span>
         ${t.message ? `<div class="msg">${esc(t.message.split("\n").slice(0, 4).join("\n"))}</div>` : ""}
         ${(() => {
@@ -430,10 +430,73 @@ const MODE_NAME = { library: "библиотека", scratch: "с нуля" };
 const MODE_TITLE = { library: "Библиотека", scratch: "С нуля" };
 const HALF = { new: ["muted", "○", "новая"], due: ["warn", "⟳", "пора повторить"], solved: ["ok", "✓", "решено"], learned: ["ok", "✓", "выучено"],
                weak: ["err", "!", "слабо"], none: ["none", "–", "нет режима"], planned: ["none", "◌", "запланировано"], concept: ["none", "◌", "концепт"] };
-// статус задачи из двух половинок: слева «Библиотека», справа «С нуля» — у каждой свой цвет
+// статус двух режимов (.ms): две маленькие иконки — книга (библиотека) и шестерёнка (с нуля), цвет — статус
+const MS_CLS = { new: "new", due: "due", solved: "ok", learned: "ok", weak: "fail", none: "none", planned: "none", concept: "none" };
 function modeHalves(statuses) {
-  return `<span class="halves">${MODES.map(m => {
-    const st = (statuses || {})[m] || "none", [c, i, t] = HALF[st] || HALF.none;
-    return `<span class="half ${c}" title="${MODE_TITLE[m]}: ${t}">${i}</span>`;
+  return `<span class="ms">${MODES.map(m => {
+    const st = (statuses || {})[m] || "none", [, , t] = HALF[st] || HALF.none;
+    return `<span class="ms-i ${MS_CLS[st] || "none"}" title="${MODE_TITLE[m]}: ${t}">${ICON[MODE_ICON[m]]}</span>`;
   }).join("")}</span>`;
+}
+// крупный вариант для таблиц: «книга выучено | шестерёнка слабо»
+const PAIR_TEXT = { new: "новая", due: "пора", solved: "решено", learned: "выучено", weak: "слабо", none: "нет режима", planned: "план", concept: "концепт" };
+function modePair(statuses) {
+  return `<span class="mpair">${MODES.map(m => {
+    const st = (statuses || {})[m] || "none";
+    return `<span class="mp ${MS_CLS[st] || "none"}" title="${MODE_TITLE[m]}">${ICON[MODE_ICON[m]]}${PAIR_TEXT[st] || st}</span>`;
+  }).join("")}</span>`;
+}
+// ---------------- иконки (16 px, цвет — currentColor) ----------------
+const svg = (body, vb = "0 0 16 16") => `<svg viewBox="${vb}" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
+const ICON = {
+  logo: svg('<path d="M5.5 4 2 8l3.5 4M10.5 4 14 8l-3.5 4"/><circle cx="8" cy="8" r="1.4" fill="currentColor" stroke="none"/>'),
+  book: svg('<rect x="3.5" y="2.5" width="9" height="11" rx="1.5"/><path d="M6 2.5v11"/>'),
+  gear: svg('<circle cx="8" cy="8" r="2.2" fill="currentColor" stroke="none"/><path d="M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.6 3.6l1.4 1.4M11 11l1.4 1.4M3.6 12.4 5 11M11 5l1.4-1.4"/>'),
+  flame: svg('<path d="M8 14c2.5 0 4-1.6 4-3.8C12 7 9 6 9 2.5 6.5 4 5.5 6 6 8 5 7.6 4.5 6.8 4.4 6 3.6 7 4 8.4 4 10.2 4 12.4 5.5 14 8 14Z"/>'),
+  moon: svg('<path d="M13 9.5A5.5 5.5 0 0 1 6.5 3a5.5 5.5 0 1 0 6.5 6.5Z"/>'),
+  sun: svg('<circle cx="8" cy="8" r="3"/><path d="M8 1.5v1.5M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1 1M11.6 11.6l1 1M3.4 12.6l1-1M11.6 4.4l1-1"/>'),
+  system: svg('<rect x="2" y="3" width="12" height="8.5" rx="1.5"/><path d="M6 14h4M8 11.5V14"/>'),
+  chevron: svg('<path d="m6 4 4 4-4 4"/>'),
+  check: svg('<path d="m3.5 8.5 3 3 6-7"/>'),
+  x: svg('<path d="m4 4 8 8M12 4l-8 8"/>'),
+  play: svg('<path d="M5 3.5v9l7-4.5-7-4.5Z" fill="currentColor"/>'),
+  stop: svg('<rect x="4" y="4" width="8" height="8" rx="1.2" fill="currentColor"/>'),
+  plus: svg('<path d="M8 3v10M3 8h10"/>'),
+  search: svg('<circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/>'),
+  lock: svg('<rect x="3.5" y="7" width="9" height="6.5" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/>'),
+  upload: svg('<path d="M8 11V3M4.5 6.5 8 3l3.5 3.5M3 13h10"/>'),
+  flask: svg('<path d="M6 2h4M6.5 2v4L3 13h10L9.5 6V2"/>'),
+  blocks: svg('<rect x="5.5" y="2.5" width="5" height="4" rx="1"/><rect x="2.5" y="9.5" width="5" height="4" rx="1"/><rect x="8.5" y="9.5" width="5" height="4" rx="1"/>'),
+  // уровни: кирпичик — столбик, блок — 2×2, стена — 3×2
+  brick: svg('<rect x="6.5" y="3" width="3" height="4" rx=".6" fill="currentColor" stroke="none"/><rect x="6.5" y="9" width="3" height="4" rx=".6" fill="currentColor" stroke="none"/>'),
+  block: svg('<rect x="3" y="3.5" width="4" height="4" rx=".8" fill="currentColor" stroke="none"/><rect x="9" y="3.5" width="4" height="4" rx=".8" fill="currentColor" stroke="none"/><rect x="3" y="9" width="4" height="4" rx=".8" fill="currentColor" stroke="none"/><rect x="9" y="9" width="4" height="4" rx=".8" fill="currentColor" stroke="none"/>'),
+  wall: svg('<rect x="1.5" y="4" width="3.6" height="3.4" rx=".6" fill="currentColor" stroke="none"/><rect x="6.2" y="4" width="3.6" height="3.4" rx=".6" fill="currentColor" stroke="none"/><rect x="10.9" y="4" width="3.6" height="3.4" rx=".6" fill="currentColor" stroke="none"/><rect x="1.5" y="8.6" width="3.6" height="3.4" rx=".6" fill="currentColor" stroke="none"/><rect x="6.2" y="8.6" width="3.6" height="3.4" rx=".6" fill="currentColor" stroke="none"/><rect x="10.9" y="8.6" width="3.6" height="3.4" rx=".6" fill="currentColor" stroke="none"/>'),
+};
+const MODE_ICON = { library: "book", scratch: "gear" };
+
+// бейдж режима: «Библиотека» — книга, контур; «С нуля» — шестерёнка, заливка
+function modeBadge(mode, { short = false } = {}) {
+  return `<span class="mb mb-${mode === "library" ? "lib" : "scr"}">${ICON[MODE_ICON[mode]] || ""}${short ? MODE_NAME[mode] : MODE_TITLE[mode]}</span>`;
+}
+// метка уровня: кирпичик / блок / стена
+const LEVEL_TITLE = { brick: "кирпичик", block: "блок", wall: "стена" };
+function levelTag(level) {
+  level = LEVEL_TITLE[level] ? level : "brick";
+  return `<span class="lvl">${ICON[level]}${LEVEL_TITLE[level]}</span>`;
+}
+// метка категории: точка цвета --c + название
+function catTag(cat, title) {
+  const c = String(cat || "").toLowerCase();
+  return `<span class="cat ${catClass(c)}"><i></i>${esc(title || CAT_TITLE[c] || cat || "—")}</span>`;
+}
+// пустое состояние (стр. 26): значок, заголовок, текст, кнопки
+function emptyState({ icon = "blocks", tone = "", title, text = "", actions = "" }) {
+  return `<div class="empty-state"><div class="es-ico ${tone}">${ICON[icon] || ""}</div><h2>${title}</h2>${text ? `<p>${text}</p>` : ""}${actions ? `<div class="row es-acts">${actions}</div>` : ""}</div>`;
+}
+
+
+// 1 день, 2 дня, 5 дней
+function plural(n, one, few, many) {
+  const a = Math.abs(n) % 100, b = a % 10;
+  return a > 10 && a < 20 ? many : b === 1 ? one : b >= 2 && b <= 4 ? few : many;
 }

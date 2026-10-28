@@ -2,7 +2,18 @@
 const view = $("#view");
 let current = null;  // открытая IDE — закрываем при уходе со страницы
 
-$("#theme").onclick = () => setTheme({ dark: "light", light: "system", system: "dark" }[themePref()] || "dark");  // тёмная → светлая → как в системе
+const paintTheme = () => { $("#theme").innerHTML = ICON[{ dark: "moon", light: "sun", system: "system" }[themePref()] || "moon"]; };
+$("#theme").onclick = () => { setTheme({ dark: "light", light: "system", system: "dark" }[themePref()] || "dark"); paintTheme(); };  // тёмная → светлая → как в системе
+paintTheme();
+// серия дней в верхней панели — из статистики (дней подряд со сданной попыткой)
+function paintStreak() {
+  api("/api/stats").then(st => {
+    const n = st?.streak?.current || 0, el = $("#streak");
+    el.hidden = !n;
+    el.innerHTML = `${ICON.flame}${n} ${plural(n, "день", "дня", "дней")}`;
+  }).catch(() => {});
+}
+paintStreak();
 
 const routes = { today: viewToday, tasks: viewTasks, task: viewTask, attempt: viewAttempt, edit: viewEdit,
                  journal: viewJournal, review: viewReview, stats: viewStats, settings: viewSettings, assemble: viewAssemble, map: viewMap, builder: viewBuilder };
@@ -18,7 +29,7 @@ function route() {
   lastHash = location.hash;
   if (current) { current.dispose(); current = null; }
   const [name, ...args] = location.hash.replace(/^#\/?/, "").split("/");
-  const nav = { task: "tasks", attempt: "journal", edit: "tasks", review: "journal", assemble: "tasks", map: "map", builder: "tasks" }[name] || name || "today";
+  const nav = { task: "tasks", attempt: "journal", edit: "tasks", review: "journal", assemble: "tasks", map: "map", builder: "builder" }[name] || name || "today";
   $$(".topbar nav a").forEach(a => a.classList.toggle("active", a.dataset.r === nav));
   document.body.classList.remove("ide-mode");
   view.innerHTML = '<div class="muted spinner">загрузка</div>';
@@ -48,7 +59,7 @@ async function viewToday() {
       <span class="badge ${cls}">${items.length}</span></div>
     ${items.length ? `<div class="scroll-x"><table><tbody>${items.map(r => `<tr class="link" data-id="${r.id}">
       <td style="width:28px">${statusCell(cls === "muted" ? "new" : cls === "ok" ? "solved" : "due")}</td>
-      <td><span class="title">${esc(r.title)}</span> <span class="badge mode-${r.mode}">${esc(r.mode_name || "")}</span><div class="muted small">${esc(r.reason)}</div></td>
+      <td><span class="title">${esc(r.title)}</span> ${modeBadge(r.mode, { short: true })}<div class="muted small">${esc(r.reason)}</div></td>
       <td>${kindBadge(r.kind)}</td><td class="muted">${esc(r.tag || "")}</td>
       <td class="nowrap muted">${r.due_at || ""}</td>
       <td class="nowrap" style="text-align:right"><button class="${cls === "muted" ? "" : "primary"} small" data-go="${r.id}" data-mode="${r.mode || ""}">${r.active_attempt ? "продолжить" : "решать"}</button></td>
@@ -57,7 +68,7 @@ async function viewToday() {
   const reviewsCard = t.reviews.length ? `<div class="card"><div class="row" style="margin-bottom:6px"><h2 style="margin:0">Работа над ошибками</h2>
       <span class="badge warn">${t.reviews.length}</span></div><table><tbody>${t.reviews.map(r => `<tr class="link" data-review="${r.id}">
         <td style="width:28px"><span class="status-ico warn">✎</span></td>
-        <td><span class="title">${esc(r.title)}</span> <span class="badge mode-${r.mode}">${esc(r.mode_name || "")}</span><div class="muted small">${esc(r.reason)}</div></td>
+        <td><span class="title">${esc(r.title)}</span> ${modeBadge(r.mode, { short: true })}<div class="muted small">${esc(r.reason)}</div></td>
         <td>${kindBadge(r.kind)}</td><td class="muted nowrap">${fmtDate(r.started_at)}</td>
         <td style="text-align:right"><button class="primary small">продолжить</button></td></tr>`).join("")}</tbody></table></div>` : "";
   view.innerHTML = `<div class="row" style="margin-bottom:14px"><h1 style="margin:0">Сегодня</h1>
@@ -339,7 +350,7 @@ async function journalTable(box, opts = {}, filter = "") {
     ${rows.length ? `<div class="scroll-x"><table><thead><tr><th>Дата</th>${opts.task_id ? "" : "<th>Задача</th>"}<th>Тип</th><th>Статус</th><th>Оценка</th><th>Время</th><th>«Проверить»</th><th>Эталон</th><th></th></tr></thead><tbody>
     ${rows.map(r => `<tr class="link" data-open="${r.type === "review" ? `#/review/${r.id}${r.status === "active" ? "" : "/report"}` : `#/attempt/${r.id}`}">
       <td class="nowrap muted">${fmtDate(r.date)}</td>${opts.task_id ? "" : `<td><span class="title">${esc(r.task)}</span></td>`}
-      <td>${r.mode ? `<span class="badge mode-${r.mode}">${esc(r.mode_name)}</span> ` : ""}${r.type === "review" ? `<span class="badge">работа над ошибками</span>${r.status === "active" ? ` <span class="muted small">шаг ${r.step}/3</span>` : ""}` : '<span class="badge">попытка</span>'}</td>
+      <td>${r.mode ? `${modeBadge(r.mode, { short: true })} ` : ""}${r.type === "review" ? `<span class="badge">работа над ошибками</span>${r.status === "active" ? ` <span class="muted small">шаг ${r.step}/3</span>` : ""}` : '<span class="badge">попытка</span>'}</td>
       <td><span class="badge ${JSTATUS[r.status] || ""}">${esc(r.status_name)}</span>${r.reason ? `<div class="muted small" style="min-width:220px;max-width:380px">${esc(r.reason)}</div>` : ""}</td>
       <td>${r.score ?? '<span class="muted">—</span>'}</td><td class="mono muted">${fmtMs(r.total_ms)}</td>
       <td class="muted">${r.checks}</td><td>${r.ref_opened ? `<span class="warn small">${r.type === "review" ? "подглядывал" : "открывал"}</span>` : '<span class="muted">—</span>'}</td>

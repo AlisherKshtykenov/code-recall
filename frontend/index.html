@@ -8,32 +8,34 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;650;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.11/katex.min.css">
-  <link rel="stylesheet" href="/style.css?v=48">
+  <link rel="stylesheet" href="/style.css?v=49">
 </head>
 <body>
   <header class="topbar">
-    <a class="logo" href="#/today"><span class="dot"></span>CODE RECALL</a>
+    <a class="logo" href="#/today"><span class="dot"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5.5 4 2 8l3.5 4M10.5 4 14 8l-3.5 4"/><circle cx="8" cy="8" r="1.4" fill="currentColor" stroke="none"/></svg></span>CODE RECALL</a>
     <nav>
       <a href="#/today" data-r="today">Сегодня</a>
       <a href="#/tasks" data-r="tasks">Задачи</a>
       <a href="#/map" data-r="map">Карта</a>
+      <a href="#/builder" data-r="builder">Конструктор</a>
       <a href="#/journal" data-r="journal">Журнал</a>
       <a href="#/stats" data-r="stats">Статистика</a>
       <a href="#/settings" data-r="settings">Настройки</a>
     </nav>
     <span class="grow"></span>
-    <button class="icon-btn" id="theme" title="светлая / тёмная тема">◐</button>
+    <a class="streak" id="streak" href="#/stats" hidden title="серия: дней подряд со сданной попыткой"></a>
+    <button class="icon-btn" id="theme" title="тема: тёмная → светлая → как в системе"></button>
   </header>
   <main id="view" class="page"></main>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.11/katex.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.52.0/min/vs/loader.js"></script>
-  <script src="/common.js?v=48"></script>
-  <script src="/ide.js?v=48"></script>
-  <script src="/bricks.js?v=48"></script>
-  <script src="/map.js?v=48"></script>
-  <script src="/builder.js?v=48"></script>
-  <script src="/app.js?v=48"></script>
+  <script src="/common.js?v=49"></script>
+  <script src="/ide.js?v=49"></script>
+  <script src="/bricks.js?v=49"></script>
+  <script src="/map.js?v=49"></script>
+  <script src="/builder.js?v=49"></script>
+  <script src="/app.js?v=49"></script>
 </body>
 </html>
