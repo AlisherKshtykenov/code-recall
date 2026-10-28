@@ -175,7 +175,7 @@ async function openIDE(root, cfg) {
   // ---------- редактор ----------
   await loadMonaco();
   ide.editor = monaco.editor.create($("#monaco", root), {
-    automaticLayout: true, fontFamily: "JetBrains Mono, Menlo, monospace", fontSize: 13.5, fontLigatures: false,
+    automaticLayout: true, fontFamily: "JetBrains Mono, Menlo, monospace", fontSize: store.get("code.fs", 13), lineHeight: 21, fontLigatures: false,
     minimap: { enabled: false }, scrollBeyondLastLine: false, tabSize: 4, insertSpaces: true, renderWhitespace: "selection",
     wordBasedSuggestions: "allDocuments", readOnly: !!cfg.readonly, model: null, padding: { top: 8 },
   });

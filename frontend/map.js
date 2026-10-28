@@ -9,67 +9,94 @@ async function viewMap(focus) {
   const m = await api("/api/map");
   const rows = arr(m.rows), cats = arr(m.categories), B = m.bricks || {};
   if (!rows.length) {
-    view.innerHTML = `<h1>Карта навыков</h1><div class="card empty">Карта пуста. Загрузите combinations.csv в <a href="#/settings">Настройках</a> → «Карта навыков».</div>`;
+    view.innerHTML = `<h1>Карта навыков</h1><div class="card">${emptyState({ icon: "blocks", title: "Карта пуста", text: "Загрузите combinations.csv — появятся типы задач и нужные им кирпичики.",
+      actions: '<a class="btn primary" href="#/settings">Импорт карты навыков</a>' })}</div>`;
     return;
   }
   const cov = m.coverage || { total: 0, created: 0, learned: 0, concepts: 0 };
+  const list = Object.values(B).filter(b => b.kind !== "concept");
+  const learnedIn = mode => list.filter(b => b.task_id && (b.statuses || {})[mode] === "learned").length;
   const pct = (a, b) => b ? Math.round(100 * a / b) : 0;
+  // чип: имя + две иконки режимов со статусом; у запланированных — бледный
   const chip = name => {
-    const b = B[name] || { status: "planned", kind: "brick" }, [cls, tip] = CHIP[b.status] || CHIP.planned;
-    const st = b.statuses || {};
-    const split = b.task_id && b.kind !== "concept";  // у созданной задачи — две половинки: библиотека | с нуля
-    const halves = split ? MODES.map(m => `${MODE_TITLE[m]}: ${(CHIP[st[m]] || ["", st[m] === "none" ? "нет режима" : "—"])[1].split(" — ")[0]}`).join(" · ") : tip;
-    return `<button class="chip ${split ? "split" : cls}" data-chip="${esc(name)}" ${split ? `style="--l: var(--chip-${st.library || "none"}); --r: var(--chip-${st.scratch || "none"})"` : ""}
-      title="${esc(name)} — ${esc(halves)}${b.note ? ` · ${esc(b.note)}` : ""} · в ${b.reuse || 0} строках">${esc(name)}</button>`;
+    const b = B[name] || { status: "planned", kind: "brick" };
+    const real = b.task_id && b.kind !== "concept";
+    const st = real ? b.statuses || {} : { library: b.kind === "concept" ? "concept" : "planned", scratch: b.kind === "concept" ? "concept" : "planned" };
+    const tip = MODES.map(md => `${MODE_TITLE[md]}: ${(CHIP[st[md]] || ["", st[md] === "none" ? "нет режима" : "—"])[1].split(" — ")[0]}`).join(" · ");
+    return `<button class="mchip ${real ? "" : "ghost-chip"} ${b.kind === "concept" ? "concept" : ""}" data-chip="${esc(name)}" title="${esc(name)} — ${esc(tip)}${b.note ? ` · ${esc(b.note)}` : ""}">
+      <span class="mc-name">${esc(name)}</span>${modeHalves(st)}</button>`;
   };
   const cell = items => {
     const groups = [];
-    arr(items).forEach(it => {  // «a / b» — варианты одного слота, рисуем рядом через «/»
+    arr(items).forEach(it => {  // «a / b» — варианты одного слота
       const g = it.slot_group != null ? groups.find(x => x.sg === it.slot_group) : null;
-      g ? g.names.push(it.name) : groups.push({ sg: it.slot_group, names: [it.name], together: it.together });
+      g ? g.names.push(it.name) : groups.push({ sg: it.slot_group, names: [it.name] });
     });
-    return groups.map(g => g.names.map(chip).join('<span class="muted small"> / </span>')).join(" ") || '<span class="muted small">—</span>';
+    return groups.map(g => g.names.map(chip).join("")).join("");
   };
-  const list = Object.values(B).filter(b => b.kind !== "concept");
-  view.innerHTML = `<div class="row" style="margin-bottom:12px"><h1 style="margin:0">Карта навыков</h1><span class="grow"></span>
-      <span class="legend"><span class="chip split" style="--l: var(--chip-learned); --r: var(--chip-new)" title="слева — «Библиотека», справа — «С нуля»">библиотека | с нуля</span>${Object.entries(CHIP).map(([k, [c, t]]) => `<span class="chip ${c}" title="${t}">${{ planned: "запланировано", new: "новая", learned: "выучено", due: "повторить", weak: "слабо", concept: "концепт" }[k]}</span>`).join("")}</span></div>
-    <div class="tiles">
-      <div class="tile"><div class="label">Кирпичиков на карте</div><div class="num">${cov.total}</div><div class="muted small">+ концептов: ${cov.concepts}</div></div>
-      <div class="tile"><div class="label">Создано задач</div><div class="num">${cov.created}</div><div class="bar"><i style="width:${pct(cov.created, cov.total)}%"></i></div><div class="muted small">${pct(cov.created, cov.total)}%</div></div>
-      <div class="tile"><div class="label">Выучено</div><div class="num ok">${cov.learned}</div><div class="bar"><i class="ok" style="width:${pct(cov.learned, cov.total)}%"></i></div><div class="muted small">${pct(cov.learned, cov.total)}%</div></div>
-    </div>
-    <div class="card"><p class="muted small" style="margin-top:0">Наведите на кирпичик — подсветятся все строки, где он используется. Клик — к задаче (у запланированных — создать задачу).</p>
-      <div class="scroll-x"><table class="map"><thead><tr><th>Задача</th>${cats.map(c => `<th>${esc(c.title)}${c.slot ? `<div class="muted small">слот ${esc(c.slot)}</div>` : ""}</th>`).join("")}</tr></thead>
+  const rowStat = r => {
+    const names = [...new Set(Object.values(r.cells || {}).flat().map(i => i.name))].filter(n => B[n]?.kind !== "concept");
+    const both = names.filter(n => { const s = B[n]?.statuses || {}; return B[n]?.task_id && MODES.every(md => s[md] === "learned" || s[md] === "none"); }).length;
+    return `${both} из ${names.length} — оба режима`;
+  };
+  view.innerHTML = `<div class="map-page">
+    <div class="row page-head"><div><h1>Карта навыков</h1><div class="muted">Какие кирпичики нужны каждому типу задач. У чипа две половинки: применение и устройство.</div></div>
+      <span class="grow"></span>
+      <div class="cov-card"><div><div class="faint small">создано</div><div><b class="num">${cov.created}</b> <span class="muted">из ${cov.total}</span></div></div>
+        ${MODES.map(md => `<div class="cov-m">${modeBadge(md, { short: true })}<span class="grow"></span><span>${learnedIn(md)} выучено</span>
+          <div class="mc-bar"><i style="width:${pct(learnedIn(md), cov.total)}%;background:var(--ok)"></i></div></div>`).join("")}</div></div>
+    <div class="row legend-row"><span class="muted">статусы:</span><span class="badge dot ok">выучено</span><span class="badge dot warn">пора повторить</span><span class="badge dot err">слабо</span>
+      <span class="badge dot new">новое</span><span class="badge plan">○ запланировано</span>
+      <span class="muted">у чипа слева</span><span class="mi mi-lib">${ICON.book}</span><span class="muted">библиотека, справа</span><span class="mi mi-scr">${ICON.gear}</span><span class="muted">с нуля</span></div>
+    <div class="card map-card"><div class="scroll-x"><table class="map"><thead><tr><th>тип задачи</th>${cats.map(c => `<th><span class="cat ${catClass(c.key)}"><i></i>${esc(c.title)}</span>${c.slot ? `<div class="faint small">слот ${esc(c.slot)}</div>` : ""}</th>`).join("")}</tr></thead>
       <tbody>${rows.map(r => `<tr data-row="${esc(r.key)}" data-bricks="${esc(Object.values(r.cells || {}).flat().map(i => i.name).join(" "))}">
-        <td class="nowrap"><a href="#/tasks" data-topic="${r.topic_id ?? ""}"><b>${esc(r.title)}</b></a></td>${cats.map(c => `<td>${cell((r.cells || {})[c.key])}</td>`).join("")}</tr>`).join("")}</tbody></table></div></div>
+        <td class="nowrap"><a href="#/tasks" data-topic="${r.topic_id ?? ""}" class="mono row-title">${esc(r.title)}</a><div class="faint small">${rowStat(r)}</div></td>
+        ${cats.map(c => `<td><div class="cell">${cell((r.cells || {})[c.key])}</div></td>`).join("")}</tr>`).join("")}</tbody></table></div></div>
+    <div class="map-plate card" id="plate" hidden></div>
     <div class="card"><h3>Что учить первым</h3><p class="muted small">Кирпичики, которые повторно используются в большем числе строк карты, окупаются быстрее всего.</p>
       <div class="scroll-x"><table><thead><tr>${[["name", "Кирпичик"], ["cat", "Категория"], ["reuse", "Используется в N задачах"], ["status", "Статус"]]
-        .map(([k, n]) => `<th class="sort" data-s="${k}">${n}${mapState.sort === k ? (mapState.dir > 0 ? " ↑" : " ↓") : ""}</th>`).join("")}</tr></thead><tbody id="reuse"></tbody></table></div></div>`;
+        .map(([k, n]) => `<th class="sort" data-s="${k}">${n}${mapState.sort === k ? (mapState.dir > 0 ? " ↑" : " ↓") : ""}</th>`).join("")}</tr></thead><tbody id="reuse"></tbody></table></div></div></div>`;
   const catTitle = Object.fromEntries(cats.map(c => [c.key, c.title]));
   const rank = { weak: 0, due: 1, new: 2, planned: 3, learned: 4 };
   const renderReuse = () => {
     const key = b => mapState.sort === "cat" ? catTitle[b.categories[0]] || "" : mapState.sort === "status" ? rank[b.status] : mapState.sort === "name" ? b.name : b.reuse;
     const sorted = [...list].sort((a, b) => { const x = key(a), y = key(b); return (typeof x === "string" ? x.localeCompare(y) : x - y) * mapState.dir || b.reuse - a.reuse || a.name.localeCompare(b.name); });
-    $("#reuse").innerHTML = sorted.map(b => `<tr data-bricks="${esc(b.name)}"><td>${chip(b.name)}</td><td class="muted small">${arr(b.categories).map(c => esc(catTitle[c] || c)).join(", ")}</td>
+    $("#reuse").innerHTML = sorted.map(b => `<tr data-bricks="${esc(b.name)}"><td>${chip(b.name)}</td><td>${arr(b.categories).map(c => catTag(c, catTitle[c] || c)).join(" ")}</td>
       <td><b>${b.reuse}</b></td><td class="small">${(CHIP[b.status] || CHIP.planned)[1].split(" — ")[0]}</td></tr>`).join("");
     bindChips();
   };
   $$("th[data-s]").forEach(th => th.onclick = () => { mapState.dir = mapState.sort === th.dataset.s ? -mapState.dir : (th.dataset.s === "reuse" ? -1 : 1); mapState.sort = th.dataset.s; viewMap(); });
   $$("a[data-topic]").forEach(a => a.onclick = () => { lib.topic = a.dataset.topic ? +a.dataset.topic : null; store.set("lib.topic", lib.topic); });
-  // наведение: все строки матрицы, где есть кирпичик, и все его чипы
-  const light = (name, on) => {
-    $$("table.map tr[data-bricks]").forEach(tr => tr.classList.toggle("hl", on && tr.dataset.bricks.split(" ").includes(name)));
-    $$(`[data-chip="${CSS.escape(name)}"]`).forEach(c => c.classList.toggle("hl", on));
+  // наведение и выбор: подсвечены строки, где кирпичик нужен, и все его чипы; внизу — плашка выбранного
+  let picked = null;
+  const light = (name, on, cls = "hl") => {
+    $$("table.map tr[data-bricks]").forEach(tr => tr.classList.toggle(cls, on && tr.dataset.bricks.split(" ").includes(name)));
+    $$(`[data-chip="${CSS.escape(name)}"]`).forEach(c => c.classList.toggle(cls, on));
+  };
+  const pick = name => {
+    if (picked) light(picked, false, "picked");
+    picked = name;
+    light(name, true, "picked");
+    const b = B[name] || { name, status: "planned" }, st = b.statuses || {};
+    const where = rows.filter(r => Object.values(r.cells || {}).flat().some(i => i.name === name)).map(r => r.title);
+    const plate = $("#plate");
+    plate.hidden = false;
+    plate.innerHTML = `<b class="mono">${esc(name)}</b>${b.task_id ? `<span class="mpair">${MODES.map(md => `<span class="mp ${MS_CLS[st[md]] || "none"}">${MODE_NAME[md]} · ${(CHIP[st[md]] || ["", "нет режима"])[1].split(" — ")[0]}</span>`).join("")}</span>`
+      : `<span class="badge plan">${b.kind === "concept" ? "концепт" : "запланировано"}</span>`}
+      <span class="muted">нужен в ${where.length} ${plural(where.length, "типе", "типах", "типах")} задач: ${where.map(esc).join(", ")}</span><span class="grow"></span>
+      <button id="plate-open">${b.task_id ? "Открыть задачу" : b.kind === "concept" ? "Что это" : "Создать задачу"}</button>`;
+    $("#plate-open").onclick = () => openChip(b.task_id || b.kind ? b : { name, status: "planned" });
   };
   function bindChips() {
     $$("[data-chip]").forEach(c => {
       c.onmouseenter = () => light(c.dataset.chip, true);
       c.onmouseleave = () => light(c.dataset.chip, false);
-      c.onclick = () => openChip(B[c.dataset.chip] || { name: c.dataset.chip, status: "planned" });
+      c.onclick = () => pick(c.dataset.chip);
+      c.ondblclick = () => openChip(B[c.dataset.chip] || { name: c.dataset.chip, status: "planned" });
     });
   }
   renderReuse();
-  if (focus && B[focus]) { light(focus, true); $(`[data-chip="${CSS.escape(focus)}"]`)?.scrollIntoView({ block: "center" }); }
+  if (focus && B[focus]) { pick(focus); $(`[data-chip="${CSS.escape(focus)}"]`)?.scrollIntoView({ block: "center" }); }
 }
 
 function openChip(b) {
@@ -80,12 +107,19 @@ function openChip(b) {
 
 // Карточка в «Настройках»: импорт / переимпорт CSV (новые строки и кирпичики добавляются, задачи не трогаются)
 function mapSettingsCard(box) {
-  box.innerHTML = `<h3>Карта навыков</h3>
-    <p class="muted small">CSV: первая строка — <span class="mono">задача,модели,preprocessing,layers,activations,losses,optimizers,metrics,comparison</span>.
-      Повторный импорт добавляет новые строки и кирпичики; существующие задачи и узлы, которые вы перенесли, не меняются.</p>
-    <div class="row"><input type="file" id="map-csv" accept=".csv,text/csv"><button id="map-imp" class="primary" disabled>Импортировать</button><a href="#/map">Открыть карту</a></div>
+  box.innerHTML = `<div class="row"><h2 style="margin:0">Импорт карты навыков</h2><span class="faint mono small">combinations.csv</span><span class="grow"></span><a href="#/map" class="small">Открыть карту</a></div>
+    <label class="drop mt" id="map-drop">Перетащи <span class="mono">combinations.csv</span> — какие кирпичики нужны каждому типу задач.<input type="file" id="map-csv" accept=".csv,text/csv" hidden></label>
+    <div class="fmt mt"><div class="faint small" style="padding:6px 10px">ожидаемый формат — строка на тип задачи, в ячейке кирпичики через запятую (в кавычках); пояснения в скобках, «нет» — пусто</div>
+      <table class="dp"><tr><th>задача</th><th>модели</th><th>preprocessing</th><th>layers</th><th>…</th><th>metrics</th><th>comparison</th></tr>
+        <tr><td>regression</td><td>"linear_regression, ridge, lasso"</td><td>"scaling, missing, encoding"</td><td>dense (1 слой)</td><td>…</td><td>"mae, rmse, r2"</td><td>"cross_validation, dummy_mean"</td></tr>
+        <tr><td>regression (деревья)</td><td>"decision_tree, random_forest"</td><td>"missing, encoding"</td><td>нет</td><td>…</td><td>"mae, rmse, r2"</td><td>"cross_validation, grid_search"</td></tr></table></div>
+    <div class="row mt"><button id="map-imp" class="primary" disabled>Импортировать</button><span class="faint small">Повторный импорт добавляет новые строки и кирпичики; существующие задачи не меняются.</span></div>
     <div id="map-pv" class="small mt"></div>`;
   const inp = $("#map-csv", box), btn = $("#map-imp", box), pv = $("#map-pv", box);
+  const dz = $("#map-drop", box);
+  dz.ondragover = e => { e.preventDefault(); dz.classList.add("over"); };
+  dz.ondragleave = () => dz.classList.remove("over");
+  dz.ondrop = e => { e.preventDefault(); dz.classList.remove("over"); inp.files = e.dataTransfer.files; inp.onchange(); };
   const form = () => { const fd = new FormData(); fd.append("file", inp.files[0]); return fd; };
   inp.onchange = async () => {
     btn.disabled = true;

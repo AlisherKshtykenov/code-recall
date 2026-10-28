@@ -443,23 +443,28 @@ async function bindDataPrompt(taskId, ide) {
 
 // ---------------- Журнал ----------------
 const JSTATUS = { active: "warn", checking: "warn", abandoned: "err", passed: "ok", partial: "warn", failed: "err" };
-const JFILTERS = [["", "Все"], ["abandoned", "Только брошенные"], ["errors", "С ошибками"], ["reviews", "Работа над ошибками"]];
 
-// Таблица попыток и «работы над ошибками». opts.task_id — только одна задача.
+// Таблица попыток и «работы над ошибками» (стр. 23). opts.task_id — только одна задача.
+const JF = [["", "все", () => true], ["library", "библиотека", r => r.mode === "library"], ["scratch", "с нуля", r => r.mode === "scratch"],
+  ["abandoned", "брошенные", r => r.status === "abandoned"], ["errors", "с ошибками", r => ["abandoned", "partial", "failed"].includes(r.status)],
+  ["reviews", "работа над ошибками", r => r.type === "review"]];
 async function journalTable(box, opts = {}, filter = "") {
-  const q = new URLSearchParams({ filter, ...(opts.task_id ? { task_id: opts.task_id } : {}) });
-  const rows = await api(`/api/journal?${q}`);
-  box.innerHTML = `<div class="row" style="margin-bottom:10px">${JFILTERS.map(([k, n]) => `<button class="small ${k === filter ? "sel" : "ghost"}" data-f="${k}">${n}</button>`).join("")}</div>
-    ${rows.length ? `<div class="scroll-x"><table><thead><tr><th>Дата</th>${opts.task_id ? "" : "<th>Задача</th>"}<th>Тип</th><th>Статус</th><th>Оценка</th><th>Время</th><th>«Проверить»</th><th>Эталон</th><th></th></tr></thead><tbody>
+  const all = await api(`/api/journal?${new URLSearchParams(opts.task_id ? { task_id: opts.task_id } : {})}`);
+  const pass = (JF.find(f => f[0] === filter) || JF[0])[2], rows = all.filter(pass);
+  box.innerHTML = `<div class="row jr-filters">${JF.map(([k, n, f]) => { const c = all.filter(f).length;
+      return `<button class="fchip ${k === filter ? "sel" : ""}" data-f="${k}" ${c || !k ? "" : "disabled"}>${n} <span class="faint">${c}</span></button>`; }).join("")}</div>
+    ${rows.length ? `<div class="scroll-x"><table class="jr-table"><thead><tr><th>Дата</th>${opts.task_id ? "" : "<th>Задача</th>"}<th>Режим</th><th>Тип</th><th>Статус</th><th>Оценка</th><th>Время</th><th>«Проверить»</th><th>Эталон</th><th>Что пошло не так</th><th></th></tr></thead><tbody>
     ${rows.map(r => `<tr class="link" data-open="${r.type === "review" ? `#/review/${r.id}${r.status === "active" ? "" : "/report"}` : `#/attempt/${r.id}`}">
       <td class="nowrap muted">${fmtDate(r.date)}</td>${opts.task_id ? "" : `<td><span class="title">${esc(r.task)}</span></td>`}
-      <td>${r.mode ? `${modeBadge(r.mode, { short: true })} ` : ""}${r.type === "review" ? `<span class="badge">работа над ошибками</span>${r.status === "active" ? ` <span class="muted small">шаг ${r.step}/3</span>` : ""}` : '<span class="badge">попытка</span>'}</td>
-      <td><span class="badge ${JSTATUS[r.status] || ""}">${esc(r.status_name)}</span>${r.reason ? `<div class="muted small" style="min-width:220px;max-width:380px">${esc(r.reason)}</div>` : ""}</td>
-      <td>${r.score ?? '<span class="muted">—</span>'}</td><td class="mono muted">${fmtMs(r.total_ms)}</td>
-      <td class="muted">${r.checks}</td><td>${r.ref_opened ? `<span class="warn small">${r.type === "review" ? "подглядывал" : "открывал"}</span>` : '<span class="muted">—</span>'}</td>
+      <td>${r.mode ? modeBadge(r.mode, { short: true }) : ""}</td>
+      <td class="nowrap">${r.type === "review" ? `работа над ошибками${r.status === "active" ? ` <span class="faint small">шаг ${r.step}/3</span>` : ""}` : "попытка"}</td>
+      <td><span class="badge dot ${JSTATUS[r.status] || ""}">${esc(r.status_name)}</span></td>
+      <td class="mono-num">${r.score ?? '<span class="faint">—</span>'}</td><td class="mono muted">${fmtMs(r.total_ms)}</td>
+      <td class="muted">${r.checks}</td><td>${r.ref_opened ? `<span class="warn small">${r.type === "review" ? "подглядывал" : "да"}</span>` : '<span class="faint">нет</span>'}</td>
+      <td class="jr-why">${r.reason ? esc(r.reason) : '<span class="faint">—</span>'}</td>
       <td style="text-align:right">${r.type === "attempt" && ["abandoned", "partial", "passed"].includes(r.status)
-        ? `<button class="small ${r.status === "passed" ? "ghost" : "primary"}" data-review="${r.id}">Работа над ошибками</button>` : ""}</td></tr>`).join("")}
-    </tbody></table></div>` : '<div class="empty">записей нет</div>'}`;
+        ? `<button class="small ${r.status === "passed" ? "link" : ""}" data-review="${r.id}">Работа над ошибками</button>` : ""}</td></tr>`).join("")}
+    </tbody></table></div>` : emptyState({ icon: "files", title: "Записей нет", text: filter ? "По этому фильтру пусто." : "Сданные, брошенные попытки и работа над ошибками появятся здесь." })}`;
   $$("[data-f]", box).forEach(b => b.onclick = () => journalTable(box, opts, b.dataset.f));
   $$("tr[data-open]", box).forEach(tr => tr.onclick = e => { if (!e.target.closest("button")) location.hash = tr.dataset.open; });
   $$("[data-review]", box).forEach(b => b.onclick = e => { e.stopPropagation(); startReview(+b.dataset.review); });
@@ -467,7 +472,7 @@ async function journalTable(box, opts = {}, filter = "") {
 }
 
 async function viewJournal() {
-  view.innerHTML = '<h1>Журнал</h1><p class="muted">Все попытки — сданные, брошенные и с ошибками — и «работа над ошибками». Клик — открыть только для чтения.</p><div class="card" id="jr"></div>';
+  view.innerHTML = '<div class="journal-page"><div class="page-head"><h1>Журнал</h1><div class="muted">Все попытки и работа над ошибками, новые сверху</div></div><div class="card jr-card" id="jr"></div></div>';
   await journalTable($("#jr"));
 }
 
@@ -500,12 +505,88 @@ function reviewsProgressHtml(list) {
   return `<div class="label mt">Работа над ошибками</div>${rows.join("")}`;
 }
 
+// ---------------- Отчёт после сдачи (стр. 19) — отдельная страница; код и тесты — «Код в редакторе» ----------------
+async function reportPage(a) {
+  const rep = a.report, sc = rep.score ?? 0, hist = arr(rep.history);
+  const prev = hist.length > 1 ? hist[hist.length - 2] : null;
+  const [today, refs] = await Promise.all([api("/api/today").catch(() => null), api(`/api/attempts/${a.id}/reference`, { method: "POST" }).catch(() => ({ files: {} }))]);
+  const next = today && [...today.overdue, ...today.due, ...today.new].find(x => x.id !== a.task_id);
+  const brickOf = Object.fromEntries((a.bricks || []).filter(b => b.module).map(b => [b.module, b]));
+  // по узлам: свои кирпичики и сама задача — режим и тесты из итогового прогона
+  const tests = arr(rep.result?.tests);
+  const nodes = [...(a.bricks || []).filter(b => b.source?.startsWith("self_")).map(b => ({ name: b.name, mode: b.mode, list: tests.filter(t => t.brick === b.name) })),
+    { name: a.title, mode: a.mode, list: tests.filter(t => !t.brick) }];
+  const written = a.files.filter(f => a.roles[f] !== "given" && (refs.files || {})[f] != null);
+  const ring = (v, cls) => { const r = 54, c = 2 * Math.PI * r; return `<svg viewBox="0 0 128 128" class="ring"><circle cx="64" cy="64" r="${r}" class="rbg"/><circle cx="64" cy="64" r="${r}" class="rfg ${cls}" stroke-dasharray="${c * v / 100} ${c}"/></svg>`; };
+  const cls = sc >= 70 ? "ok" : sc >= 50 ? "warn" : "err";
+  const dueIn = a.due_at ? Math.round((Date.parse(a.due_at) - Date.now()) / 864e5) : null;
+  const dt = prev?.total_ms != null ? prev.total_ms - a.total_ms : null;
+  view.innerHTML = `<div class="report-page">
+    <div class="row page-head"><div><div class="muted">${a.outcome === "passed" ? "Сдано" : "Сдано частично"} ${fmtDate(a.finished_at)}${hist.length ? ` · попытка ${hist.length}` : ""}</div>
+      <div class="row"><h1 style="margin:0">${esc(a.title)}</h1>${modeBadge(a.mode)}</div></div><span class="grow"></span>
+      <a class="btn link" href="#/attempt/${a.id}/code">Код в редакторе</a>
+      ${next ? `<button id="rp-next">Следующая — ${esc(next.name || next.title)}</button>` : ""}
+      ${a.status !== "checking" ? `<button class="primary" id="rp-work">Работа над ошибками</button>` : ""}</div>
+    <div class="rp-top">
+      <div class="card rp-score"><div class="ring-box">${ring(sc, cls)}<div class="ring-n"><b>${rep.score ?? "—"}</b><span class="faint small">из 100</span></div></div>
+        <div><div class="row"><h2 style="margin:0">${esc(a.grade_name || "без уровня")}</h2><span class="muted">${a.due_at ? `следующее повторение${dueIn != null && dueIn > 0 ? ` через ${dueIn} ${plural(dueIn, "день", "дня", "дней")}` : ""} — ${fmtDay(a.due_at)}` : ""}</span></div>
+          <div class="row mt">${Object.entries(a.grades).map(([g, n]) => `<button class="small ${+g === a.grade ? "sel" : "ghost"}" data-g="${g}">${n}${+g === a.grade && !a.grade_manual ? " · по оценке" : ""}</button>`).join("")}
+            ${a.grade_manual ? '<button class="small link" data-g="">вернуть авто</button>' : ""}</div>
+          <p class="muted small">Не согласен с оценкой — выбери уровень сам. Интервал пересчитается.</p>
+          ${(rep.reasons || []).length ? `<p class="faint small">${rep.reasons.map(esc).join(" · ")}</p>` : ""}</div></div>
+      <div class="card rp-nodes"><div class="label">По узлам</div>${nodes.map(n => {
+        const ok = n.list.filter(t => t.status === "pass").length, tot = n.list.length;
+        return `<div class="rp-node"><i class="sq ${n.mode === "library" ? "m-library" : "m-scratch"}"></i><b class="mono">${esc(n.name)}</b><span class="faint small">${MODE_NAME[n.mode] || ""}</span><span class="grow"></span>
+          <span class="score-b ${tot && ok === tot ? "ok" : "err"}">тесты ${ok}/${tot}</span></div>`; }).join("")}</div>
+    </div>
+    <div class="rp-tiles">
+      <div class="card"><div class="muted">Время</div><div class="big-n">${fmtMs(a.total_ms)}</div>${dt != null && Math.abs(dt) > 1000 ? `<div class="${dt > 0 ? "ok" : "warn"} small">на ${fmtMs(Math.abs(dt))} ${dt > 0 ? "быстрее" : "дольше"} прошлой</div>` : ""}</div>
+      <div class="card"><div class="muted">«Проверить»</div><div class="big-n">${a.checks} ${plural(a.checks, "раз", "раза", "раз")}</div></div>
+      <div class="card"><div class="muted">Эталон</div><div class="big-n">${a.ref_opened ? "открывал" : "не открывал"}</div><div class="faint small">${a.ref_opened ? "штраф за подсмотр" : "штрафа нет"}</div></div>
+      <div class="card"><div class="muted">Оценка по попыткам</div><div id="rp-h1"></div></div>
+      <div class="card"><div class="muted">Время по попыткам</div><div id="rp-h2"></div></div>
+    </div>
+    ${(rep.warnings || []).length ? `<div class="card"><ul class="plain">${rep.warnings.map(x => `<li class="${x.level}">${esc(x.text)}</li>`).join("")}</ul></div>` : ""}
+    ${written.map((f, i) => `<div class="card rp-diff"><div class="rp-dh"><b>${esc(f)}</b><span class="muted small" id="rp-sum-${i}"></span><span class="grow"></span></div><div class="rp-dv" id="rp-d-${i}"></div></div>`).join("")}
+    ${rep.judge && rep.judge !== "pending" && rep.judge.ok ? `<div class="card"><div class="row"><i class="t-dot fail"></i><b>${esc(rep.judge.comment)}</b></div>
+      ${rep.judge.differences.length ? `<ul class="plain">${rep.judge.differences.map(d => `<li>${esc(d)}</li>`).join("")}</ul>` : ""}<div class="faint small">${esc(rep.judge.provider)} · ${esc(rep.judge.model)} · на оценку не влияет</div></div>`
+      : rep.judge === "pending" ? '<div class="card muted spinner small">комментарий модели готовится</div>' : ""}
+    ${reviewsProgressHtml(a.reviews || [])}
+  </div>`;
+  const spark = (el, vals, fmt) => {
+    if (!vals.length) return;
+    const W = 220, H = 60, max = Math.max(...vals), min = Math.min(...vals), y = v => H - 8 - (max === min ? .5 : (v - min) / (max - min)) * (H - 16);
+    const x = i => vals.length === 1 ? W / 2 : 8 + i * (W - 16) / (vals.length - 1);
+    el.innerHTML = `<svg viewBox="0 0 ${W} ${H + 16}" class="spark"><path d="${vals.map((v, i) => `${i ? "L" : "M"}${x(i)},${y(v)}`).join("")}"/>${vals.map((v, i) => `<circle cx="${x(i)}" cy="${y(v)}" r="3"/><text x="${x(i)}" y="${H + 12}" text-anchor="middle">${fmt(v)}</text>`).join("")}</svg>`;
+  };
+  spark($("#rp-h1"), hist.slice(-5).map(h => h.score ?? 0), v => v);
+  spark($("#rp-h2"), hist.slice(-5).map(h => h.total_ms || 0), v => fmtMs(v));
+  current = { dispose: () => { (current?._diffs || []).forEach(d => d.dispose?.()); } };
+  const diffs = [];
+  current._diffs = diffs;
+  for (const [i, f] of written.entries()) {
+    const box = $(`#rp-d-${i}`);
+    const mine = (await api(`/api/attempts/${a.id}/file?path=${encodeURIComponent(f)}`).catch(() => ({ content: "" }))).content;
+    diffs.push(await diffSwitcher(box, mine, refs.files[f], ["эталон", "мой код"]));
+  }
+  $$("[data-g]").forEach(b => b.onclick = async () => {
+    const na = await api(`/api/attempts/${a.id}/grade`, { method: "POST", json: { grade: b.dataset.g ? +b.dataset.g : null } });
+    toast(`уровень: ${na.grade_name} · повтор ${na.due_at}`); reportPage(na);
+  });
+  const nx = $("#rp-next");
+  if (nx) nx.onclick = () => startAttempt(next.id, next.mode);
+  const wk = $("#rp-work");
+  if (wk) wk.onclick = () => startReview(a.id);
+  if (rep.judge === "pending") setTimeout(async () => { if ($(".report-page")) reportPage(await api(`/api/attempts/${a.id}`)); }, 3000);
+}
+
 // ---------------- Решение (IDE) ----------------
 const OUTCOME_TITLE = { abandoned: "брошена", passed: "сдана", partial: "тесты частично", checking: "проверяется" };
 
-async function viewAttempt(id) {
+async function viewAttempt(id, sub) {
   let a = await api(`/api/attempts/${id}`);
   const readonly = a.status !== "active";
+  if (readonly && a.report?.weights && sub !== "code") return reportPage(a);  // сданная — страница отчёта
   const base = `/api/attempts/${id}`;
   const loadedAt = Date.now(), baseMs = a.total_ms;
   const totalMs = () => readonly ? a.total_ms : baseMs + (Date.now() - loadedAt);
@@ -713,7 +794,7 @@ function renderReport(el, a, update) {
 // ---------------- Работа над ошибками ----------------
 const RSTEPS = [[1, "Смотрю"], [2, "Переписываю с подглядыванием"], [3, "По памяти"]];
 function stepperHtml(r) {
-  return `<div class="stepper">${RSTEPS.map(([n, name]) => `<span class="st ${r.status === "active" && r.step === n ? "cur" : (r.status === "passed" || r.step > n) ? "done" : ""}">${r.status === "passed" || r.step > n ? "✓" : n} ${name}</span>`).join('<span class="muted">→</span>')}
+  return `<div class="stepper">${RSTEPS.map(([n, name]) => `<span class="st ${r.status === "active" && r.step === n ? "cur" : (r.status === "passed" || r.step > n) ? "done" : ""}"><i>${r.status === "passed" || r.step > n ? "✓" : n}</i>${name}</span>`).join('<span class="st-line"></span>')}
     ${r.files.length > 1 ? `<span class="muted small">файл ${r.idx + 1} из ${r.files.length}: <span class="mono">${esc(r.file)}</span></span>` : `<span class="muted small mono">${esc(r.file)}</span>`}</div>`;
 }
 
@@ -1000,77 +1081,145 @@ async function viewEdit(id) {
 
 // ---------------- Статистика ----------------
 async function viewStats() {
-  const st = await api("/api/stats");
-  const tasks = (await api("/api/tasks")).filter(t => t.attempts);
+  const [st, all, mp] = await Promise.all([api("/api/stats"), apiList("/api/tasks"), api("/api/map").catch(() => ({ bricks: {}, categories: [] }))]);
   const s = st.streak, maxC = Math.max(1, ...st.calendar.map(d => d.count));
-  view.innerHTML = `<h1>Статистика</h1>
-    <div class="tiles">
-      <div class="tile"><div class="label">Серия</div><div class="num ${s.current ? "ok" : "muted"}">${s.current}</div><div class="muted small">дн. подряд${s.current && !s.today_done ? " · сегодня ещё не решали" : ""}</div></div>
-      <div class="tile"><div class="label">Лучшая серия</div><div class="num">${s.best}</div><div class="muted small">дн.</div></div>
-      <div class="tile"><div class="label">Сдано попыток</div><div class="num">${st.attempts}</div><div class="muted small">задач: ${st.tasks}</div></div>
-      <div class="tile"><div class="label">Активных дней</div><div class="num">${st.days_active}</div><div class="muted small">за всё время</div></div>
+  const month = s.best_end ? new Date(s.best_end).toLocaleDateString("ru", { month: "long" }).replace(/^./, c => c) : "";
+  const monthIn = month ? `в ${{ январь: "январе", февраль: "феврале", март: "марте", апрель: "апреле", май: "мае", июнь: "июне", июль: "июле", август: "августе", сентябрь: "сентябре", октябрь: "октябре", ноябрь: "ноябре", декабрь: "декабре" }[month] || month}` : "";
+  // библиотека vs с нуля: доля выученных по категориям — из статусов карты (только созданные задачи)
+  const bricks = Object.values(mp.bricks || {}).filter(b => b.task_id && b.kind !== "concept");
+  const cats = arr(mp.categories).filter(c => c.key !== "models" || true);
+  const share = (list, md) => { const own = list.filter(b => (b.statuses || {})[md] && b.statuses[md] !== "none"); return own.length ? Math.round(100 * own.filter(b => b.statuses[md] === "learned").length / own.length) : null; };
+  const learnedN = md => bricks.filter(b => (b.statuses || {})[md] === "learned").length, ownN = md => bricks.filter(b => (b.statuses || {})[md] && b.statuses[md] !== "none").length;
+  // слабые кирпичики: режим «слабо» на карте + последняя ошибка теста этой задачи
+  const errOf = Object.fromEntries([...st.weak_tests].reverse().map(t => [t.task_id, t]));
+  const weak = all.filter(t => MODES.some(m => t.mode_stats?.[m]?.learn === "weak")).map(t => {
+    const m = MODES.find(md => t.mode_stats[md].learn === "weak"); return { t, m, score: t.mode_stats[m].last, err: errOf[t.id] };
+  }).sort((a, b) => (a.score ?? 101) - (b.score ?? 101)).slice(0, 6);
+  const tried = all.filter(t => t.attempts).sort((a, b) => (a.best_score ?? 0) - (b.best_score ?? 0)).slice(0, 3);
+  const weeks = [];
+  st.calendar.forEach((d, i) => { (weeks[Math.floor(i / 7)] ||= []).push(d); });
+  view.innerHTML = `<div class="stats-page"><h1>Статистика</h1>
+    <div class="st-top">
+      <div class="card"><div class="muted">Серия</div><div class="big-n" style="font-size:34px">${s.current} ${plural(s.current, "день", "дня", "дней")}</div>
+        <div class="muted">рекорд — ${s.best} ${plural(s.best, "день", "дня", "дней")}${monthIn ? `, ${monthIn}` : ""}${s.current && !s.today_done ? " · сегодня ещё не занимались" : ""}</div></div>
+      <div class="card st-act"><div class="row"><span class="muted">Активность за 12 недель</span><span class="grow"></span><span class="faint small">меньше</span>
+          ${[0, .35, .6, .85, 1].map(a => `<i class="lg" style="--a:${a}"></i>`).join("")}<span class="faint small">больше</span></div>
+        <div class="row" style="align-items:flex-start;gap:28px;margin-top:10px">
+          <div class="cal2"><div class="dn">${["пн", "", "ср", "", "пт", "", "вс"].map(d => `<span>${d}</span>`).join("")}</div>
+            ${weeks.map(w => `<div class="wk">${w.map(d => `<i class="${d.count ? "on" : ""}" style="--a:${d.count ? 0.35 + 0.65 * d.count / maxC : 0}" title="${d.date}: ${d.count}"></i>`).join("")}</div>`).join("")}</div>
+          <div class="st-nums"><div><b>${st.days_12w}</b> ${plural(st.days_12w, "день", "дня", "дней")} с занятиями</div><div><b>${st.hours_12w} ч</b> за 12 недель</div><div><b>${st.attempts}</b> ${plural(st.attempts, "попытка", "попытки", "попыток")}</div></div></div></div>
     </div>
-    <div class="card"><h3>12 недель</h3><div class="cal">${st.calendar.map(d => `<i class="${d.count ? "on" : ""}" style="--a:${d.count ? 0.35 + 0.65 * d.count / maxC : 0}" title="${d.date}: ${d.count}"></i>`).join("")}${'<i class="future"></i>'.repeat((7 - st.calendar.length % 7) % 7)}</div></div>
-    <div class="card"><h3>Слабые темы</h3>${st.weak_tags.length ? `<table><thead><tr><th>Тема</th><th>Попыток</th><th>Средняя оценка</th><th>Тесты с ошибками</th></tr></thead><tbody>
-      ${st.weak_tags.map(t => `<tr><td>${esc(t.tag)}</td><td class="muted">${t.attempts}</td><td>${t.avg_score ?? "—"}</td>
-        <td><span class="bar"><i style="width:${Math.round(t.fail_rate * 100)}%"></i></span> <span class="muted small">${t.fails}/${t.tests}</span></td></tr>`).join("")}</tbody></table>` : '<div class="empty">данных пока нет</div>'}</div>
-    <div class="card"><h3>Слабые тесты</h3>${st.weak_tests.length ? `<table><thead><tr><th>Тест</th><th>Задача</th><th>Падал</th><th>Последняя ошибка</th></tr></thead><tbody>
-      ${st.weak_tests.map(t => `<tr class="link" data-t="${t.task_id}"><td class="mono small">${esc(t.test)}</td><td>${esc(t.task)}</td><td class="err nowrap">${t.fails} из ${t.n}</td>
-        <td class="muted small" title="${esc(t.last_error)}">${esc(t.last_error)}</td></tr>`).join("")}</tbody></table>` : '<div class="empty">ошибок в тестах пока нет</div>'}</div>
-    <div class="card"><h3>Прогресс по задаче</h3>${tasks.length ? `<select id="pick">${tasks.map(t => `<option value="${t.id}">${esc(t.title)}</option>`).join("")}</select><div id="prog" class="mt"></div>` : '<div class="empty">сданных попыток нет</div>'}</div>`;
-  $$("tr[data-t]").forEach(tr => tr.onclick = () => { location.hash = `#/task/${tr.dataset.t}`; });
-  if (tasks.length) {
-    const show = async tid => {
-      const list = (await api(`/api/tasks/${tid}/attempts`)).filter(a => a.status === "submitted").reverse();
-      historyCharts($("#prog"), list.map(a => ({ date: a.finished_at, score: a.score, total_ms: a.total_ms })));
-    };
-    $("#pick").onchange = e => show(e.target.value);
-    show(tasks[0].id);
-  }
+    <div class="card st-vs"><div class="row st-vs-h"><h2 style="margin:0">Библиотека vs с нуля</h2>
+        ${MODES.map(md => `<span class="mb mb-${md === "library" ? "lib" : "scr"}">${ICON[MODE_ICON[md]]}${MODE_NAME[md]} · ${learnedN(md)} из ${ownN(md)} выучено</span>`).join("")}
+        <span class="grow"></span>${st.mode_lag_days != null ? `<span class="muted small">«с нуля» в среднем отстаёт от применения на ${st.mode_lag_days} ${plural(st.mode_lag_days, "день", "дня", "дней")}</span>` : ""}</div>
+      <div class="vs-grid"><span></span><span class="faint small">библиотека — доля выученных</span><span></span><span class="faint small">с нуля — доля выученных</span><span></span>
+        ${cats.map(c => { const list = bricks.filter(b => arr(b.categories).includes(c.key)); if (!list.length) return "";
+          return `${catTag(c.key, c.title)}${MODES.map(md => { const v = share(list, md);
+            return `<div class="vs-bar"><i class="${md}" style="width:${v ?? 0}%"></i></div><span class="mono-num">${v == null ? "—" : `${v}%`}</span>`; }).join("")}`; }).join("")}</div></div>
+    <div class="st-bottom">
+      <div class="card"><h2>Слабые темы</h2>${st.weak_tags.filter(t => t.avg_score != null).length ? st.weak_tags.filter(t => t.avg_score != null).slice(0, 6).map(t => `<div class="wt"><span>${esc(t.tag)}</span>
+          <div class="vs-bar"><i style="width:${t.avg_score}%;background:${t.avg_score >= 80 ? "var(--ok)" : t.avg_score >= 60 ? "var(--due)" : "var(--fail)"}"></i></div><b class="mono-num">${t.avg_score}</b></div>`).join("")
+          + '<p class="faint small">средняя оценка по сданным попыткам</p>' : emptyState({ icon: "check", tone: "ok", title: "Пока нечего показать", text: "Сдайте несколько попыток." })}</div>
+      <div class="card st-weak"><h2>Слабые кирпичики</h2>${weak.length ? weak.map(w => `<div class="trow2" data-t="${w.t.id}"><div class="tr-main"><div class="tr-name"><b class="mono">${esc(w.t.name)}</b><span class="faint"> · ${MODE_NAME[w.m]}</span></div>
+          <div class="muted small">${w.err ? esc(`${w.err.test}: ${w.err.last_error}`.slice(0, 110)) : "прошлый раз ошибся"}</div></div>
+          ${w.score != null ? `<span class="score-b ${w.score >= 70 ? "ok" : w.score >= 50 ? "warn" : "err"}">${w.score}</span>` : ""}</div>`).join("")
+          : emptyState({ icon: "check", tone: "ok", title: "Слабых нет", text: "Все кирпичики в порядке." })}</div>
+      <div class="card"><div class="row"><h2 style="margin:0">По задаче</h2><span class="grow"></span>${tried.length ? `<div class="seg" style="margin:0">${tried.map((t, i) => `<button data-pt="${t.id}" class="mono ${i ? "" : "sel"}">${esc(t.name)}</button>`).join("")}</div>` : ""}</div>
+        <div id="prog" class="mt">${tried.length ? "" : emptyState({ icon: "flask", title: "Сданных попыток нет", text: "" })}</div></div>
+    </div></div>`;
+  $$(".st-weak [data-t]").forEach(tr => tr.onclick = () => { location.hash = `#/task/${tr.dataset.t}`; });
+  const show = async tid => {
+    const list = (await api(`/api/tasks/${tid}/attempts`)).filter(a => a.status === "submitted").reverse().slice(-8);
+    const sc = list.map(a => a.score ?? 0), tm = list.map(a => Math.round((a.total_ms || 0) / 60000));
+    const line = (vals, cls) => { if (!vals.length) return ""; const W = 300, H = 70, mx = Math.max(...vals), mn = Math.min(...vals);
+      const x = i => vals.length === 1 ? W / 2 : i * W / (vals.length - 1), y = v => H - 8 - (mx === mn ? .5 : (v - mn) / (mx - mn)) * (H - 16);
+      return `<svg viewBox="0 0 ${W} ${H}" class="spark ${cls}" preserveAspectRatio="none"><path d="${vals.map((v, i) => `${i ? "L" : "M"}${x(i)},${y(v)}`).join("")}"/></svg>`; };
+    $("#prog").innerHTML = list.length ? `<div class="row"><span class="muted">Оценка</span><span class="grow"></span><span class="faint small">от ${Math.min(...sc)} до ${Math.max(...sc)}</span></div>${line(sc, "")}
+      <div class="row mt"><span class="muted">Время, мин</span><span class="grow"></span><span class="faint small">от ${Math.min(...tm)} до ${Math.max(...tm)} мин</span></div>${line(tm, "t")}
+      <p class="faint small">${list.length} ${plural(list.length, "попытка", "попытки", "попыток")} · последняя справа</p>` : '<p class="muted">сданных попыток нет</p>';
+  };
+  $$("[data-pt]").forEach(b => b.onclick = () => { $$("[data-pt]").forEach(x => x.classList.toggle("sel", x === b)); show(b.dataset.pt); });
+  if (tried.length) show(tried[0].id);
 }
 
 // ---------------- Настройки ----------------
 async function viewSettings() {
   const s = await api("/api/settings");
-  const num = (k, label, hint = "") => `<div class="row" style="padding:3px 0"><label class="grow">${label}${hint ? ` <span class="muted small">${hint}</span>` : ""}</label><input type="number" min="0" data-k="${k}" value="${s[k]}" style="width:90px"></div>`;
-  view.innerHTML = `<h1>Настройки</h1>
-    <div class="card"><h3>Оценка</h3>
-      <p class="muted small">Оценка = 100 · доля прошедших тестов − штрафы. Уровень повторения: ≥90 легко, ≥70 нормально, ≥50 трудно, иначе забыл.</p>
-      ${num("free_checks", "«Проверить» без штрафа, раз")}${num("check_penalty", "Штраф за каждое следующее «Проверить»")}${num("check_penalty_max", "Максимальный штраф за «Проверить»")}
-      ${num("ref_penalty", "Штраф за открытый эталон")}${num("time_penalty", "Штраф за время дольше прошлого раза")}${num("slower_pct", "…если дольше больше чем на, %")}</div>
-    <div class="card"><h3>LLM-комментарий</h3>
-      <label class="row"><input type="checkbox" id="judge" ${+s.llm_judge ? "checked" : ""}> После сдачи — короткий комментарий по стилю и отличиям от эталона (на оценку не влияет)</label>
-      <div class="row mt"><label>Провайдер</label><select id="prov"><option value="ollama" ${s.llm_provider === "ollama" ? "selected" : ""}>Ollama (локально)</option><option value="groq" ${s.llm_provider === "groq" ? "selected" : ""}>Groq API</option></select></div>
-      <div class="row mt"><label>Ollama URL</label><input id="o-url" class="grow" value="${esc(s.ollama_url)}"><label>модель</label><input id="o-model" value="${esc(s.ollama_model)}"></div>
-      <div class="row mt"><label>Groq модель</label><input id="g-model" class="grow" value="${esc(s.groq_model)}"><span class="${s.groq_key_set ? "ok" : "warn"} small">GROQ_API_KEY ${s.groq_key_set ? "задан" : "не задан (.env)"}</span></div>
-      <div class="row mt"><button id="test">Проверить связь</button><span id="test-out" class="small"></span></div></div>
-    <div class="card" id="map-card"></div>
-    <div class="card"><h3>Бэкап</h3>
-      <p class="muted small">Экспорт — один .zip: база (задачи, версии, попытки, расписание, настройки) и текстовые файлы задач. Датасеты из data/ в архив не входят.
-        Импорт заменяет базу; текущая перед этим сохраняется в data/backups/. Автокопия базы — раз в день, хранятся 7 последних.</p>
-      <div class="row"><a class="btn" href="/api/backup/export" download>Экспорт</a><button id="imp">Импорт…</button><input type="file" id="imp-file" accept=".zip" hidden><button id="bk-now" class="ghost">Автокопия сейчас</button></div>
-      <div id="bk-list" class="small muted mt mono"></div></div>
-    <button class="primary" id="save">Сохранить настройки</button>`;
+  // параметры оценки как ползунки (это реальные штрафы оценки, а не доли)
+  const W = [["free_checks", "«Проверить» без штрафа", "раз", 10], ["check_penalty", "«Проверить»", "каждое следующее — минус", 30], ["check_penalty_max", "«Проверить», не больше", "потолок штрафа", 60],
+    ["ref_penalty", "Эталон", "подсмотр — минус", 50], ["time_penalty", "Время", "дольше прошлой попытки — минус", 40], ["slower_pct", "…дольше больше чем на", "%", 100]];
+  const sec = [["env", "Окружение Python"], ["llm", "LLM-судья"], ["w", "Веса оценки"], ["bk", "Бэкапы"], ["map", "Импорт карты"], ["theme", "Тема"]];
+  view.innerHTML = `<div class="settings-page"><h1>Настройки</h1><div class="set-grid">
+    <nav class="set-nav">${sec.map(([k, n], i) => `<a href="#" data-sec="${k}" class="${i ? "" : "active"}">${n}</a>`).join("")}</nav>
+    <div>
+      <section class="card" id="sec-env"><div class="row"><h2 style="margin:0">Окружение Python</h2><span id="env-st"></span><span class="grow"></span><button class="small" id="env-check">Проверить окружение</button></div>
+        <label class="fld">Интерпретатор приложения<div class="env-path"><span class="mono" id="env-py">…</span><span class="faint" id="env-v"></span></div></label>
+        <div class="chips" id="env-pk"></div><p class="faint small">Окружение конкретной задачи и лимит времени на запуск — в настройках задачи.</p></section>
+      <section class="card" id="sec-llm"><div class="row"><h2 style="margin:0">LLM-судья</h2><span class="grow"></span><label class="switch"><input type="checkbox" id="judge" ${+s.llm_judge ? "checked" : ""}><i></i></label></div>
+        <p class="muted">Комментирует код после сдачи: короткая причина ошибки и отличия от эталона. На оценку и прохождение тестов не влияет.</p>
+        <div class="two"><label class="fld">Провайдер<select id="prov"><option value="ollama" ${s.llm_provider === "ollama" ? "selected" : ""}>Ollama (локально)</option><option value="groq" ${s.llm_provider === "groq" ? "selected" : ""}>Groq API</option></select></label>
+          <label class="fld">Ollama URL<input id="o-url" value="${esc(s.ollama_url)}"></label>
+          <label class="fld">Модель Ollama<input id="o-model" value="${esc(s.ollama_model)}"></label>
+          <label class="fld">Модель Groq<input id="g-model" value="${esc(s.groq_model)}"><span class="${s.groq_key_set ? "ok" : "warn"} small">GROQ_API_KEY ${s.groq_key_set ? "задан" : "не задан (.env)"}</span></label></div>
+        <div class="row"><button class="small" id="test">Проверить связь</button><span id="test-out" class="small"></span></div></section>
+      <section class="card" id="sec-w"><div class="row"><h2 style="margin:0">Веса оценки</h2><span class="grow"></span><span class="faint small">оценка = 100 · доля прошедших тестов − штрафы</span></div>
+        ${W.map(([k, n, hint, max]) => `<div class="wrow"><div><div>${n}</div><div class="faint small">${hint}</div></div>
+          <input type="range" min="0" max="${max}" value="${s[k]}" data-k="${k}"><b class="mono-num" data-v="${k}">${s[k]}</b></div>`).join("")}
+        <p class="faint small">Уровень повторения: ≥90 легко, ≥70 нормально, ≥50 трудно, иначе забыл; открытый эталон — на уровень ниже.</p></section>
+      <section class="card" id="sec-bk"><div class="row"><h2 style="margin:0">Бэкапы</h2><span class="faint mono small">data/backups</span><span class="grow"></span>
+          <a class="btn small" href="/api/backup/export" download>Экспорт .zip</a><button class="small" id="imp">Загрузить бэкап…</button><input type="file" id="imp-file" accept=".zip" hidden>
+          <button class="primary small" id="bk-now">Сделать копию сейчас</button></div>
+        <div class="two mt"><div><div class="bk-h"><b>Автокопии</b><span class="faint small">раз в день · хранятся 7 последних</span></div><div class="bk-list" id="bk-auto"></div></div>
+          <div><div class="bk-h"><b>Ручные копии</b><span class="faint small">отдельная папка · не удаляются сами</span></div><div class="bk-list" id="bk-man"></div>
+            <p class="faint small">Копии перед миграциями и импортом. Восстановить — «Загрузить бэкап».</p></div></div></section>
+      <section class="card" id="sec-map"></section>
+      <section class="card" id="sec-theme"><div class="row"><h2 style="margin:0">Тема</h2><span class="grow"></span>
+        <div class="seg" style="margin:0">${[["dark", "Тёмная"], ["light", "Светлая"], ["system", "Как в системе"]].map(([k, n]) => `<button data-th="${k}" class="${themePref() === k ? "sel" : ""}">${n}</button>`).join("")}</div>
+        <div class="seg" style="margin:0">${[13, 14].map(n => `<button data-fs="${n}" class="${store.get("code.fs", 13) === n ? "sel" : ""}">Код ${n} px</button>`).join("")}</div></div></section>
+    </div></div></div>`;
   const save = () => api("/api/settings", { method: "PUT", json: {
     ...Object.fromEntries($$("[data-k]").map(i => [i.dataset.k, Math.max(0, +i.value || 0)])), llm_judge: $("#judge").checked ? 1 : 0,
     llm_provider: $("#prov").value, ollama_url: $("#o-url").value, ollama_model: $("#o-model").value, groq_model: $("#g-model").value } });
-  $("#save").onclick = async () => { await save(); toast("сохранено"); };
+  let t = null;
+  const autosave = () => { clearTimeout(t); t = setTimeout(async () => { await save(); toast("настройки сохранены"); }, 500); };
+  $$("[data-k]").forEach(i => i.oninput = () => { $(`[data-v="${i.dataset.k}"]`).textContent = i.value; autosave(); });
+  ["#judge", "#prov", "#o-url", "#o-model", "#g-model"].forEach(id => $(id).onchange = autosave);
+  $$("[data-sec]").forEach(a => a.onclick = e => { e.preventDefault(); $$("[data-sec]").forEach(x => x.classList.toggle("active", x === a)); $(`#sec-${a.dataset.sec}`).scrollIntoView({ behavior: "smooth", block: "start" }); });
+  const env = async () => {
+    $("#env-st").innerHTML = '<span class="faint spinner small">проверяю</span>';
+    try {
+      const r = await api("/api/python/check", { method: "POST", json: { path: "" } });
+      $("#env-st").innerHTML = `<span class="badge dot ${r.pytest ? "ok" : "err"}">${r.pytest ? "работает" : "нет pytest"}</span>`;
+      $("#env-py").textContent = r.python; $("#env-v").textContent = r.version;
+      $("#env-pk").innerHTML = r.packages.map(p => `<span class="tag">${esc({ sklearn: "scikit-learn" }[p] || p)} ${esc((r.versions?.[p] || "").split(".").slice(0, 2).join("."))}</span>`).join("")
+        + (r.pytest ? "" : `<span class="err small">установите: <span class="mono">${esc(r.fix)}</span></span>`);
+    } catch (e) { $("#env-st").innerHTML = `<span class="badge err">${esc(e.message)}</span>`; }
+  };
+  env();
+  $("#env-check").onclick = env;
   $("#test").onclick = async () => {
     await save();
     $("#test-out").innerHTML = '<span class="muted spinner">спрашиваю модель</span>';
     const r = await api("/api/settings/test", { method: "POST" });
     $("#test-out").innerHTML = r.ok ? `<span class="ok">ok</span> · ${esc(r.provider)} · ${esc(r.model)} · ${(r.ms / 1000).toFixed(1)} с: «${esc(r.answer)}»` : `<span class="err">нет связи: ${esc(r.answer)}</span>`;
   };
-  const list = l => { $("#bk-list").innerHTML = l.map(b => `${esc(b.name)} · ${fmtSize(b.size)} · ${fmtDate(b.created)}`).join("<br>") || "копий нет"; };
-  mapSettingsCard($("#map-card"));
+  const row = b => `<div class="bk-row"><span class="mono">${esc(b.name)}</span><span class="faint small">${fmtDate(b.created)}</span><span class="grow"></span><span class="faint small">${fmtSize(b.size)}</span>
+    <a class="small" href="/api/backup/file?name=${encodeURIComponent(b.name)}" download>Скачать</a></div>`;
+  const list = l => {
+    $("#bk-auto").innerHTML = l.filter(b => b.auto).map(row).join("") || '<p class="faint small" style="padding:8px">копий нет</p>';
+    $("#bk-man").innerHTML = l.filter(b => !b.auto).map(row).join("") || '<p class="faint small" style="padding:8px">копий нет</p>';
+  };
+  mapSettingsCard($("#sec-map"));
   api("/api/backup/list").then(list);
   $("#bk-now").onclick = async () => { const r = await api("/api/backup/now", { method: "POST" }); list(r.backups); toast(r.made ? `создана ${r.made}` : "сегодняшняя копия уже есть"); };
   $("#imp").onclick = () => $("#imp-file").click();
   $("#imp-file").onchange = async e => {
     const f = e.target.files[0];
-    if (!f || !confirm(`Заменить базу содержимым «${f.name}»?`)) return;
+    if (!f || !confirm(`Заменить базу содержимым «${f.name}»? Текущая база перед этим сохранится в ручные копии.`)) return;
     const fd = new FormData(); fd.append("file", f);
     try { const r = await api("/api/backup/import", { method: "POST", body: fd }); toast(`импортировано задач: ${r.tasks}`); api("/api/backup/list").then(list); }
     catch (err) { toast(err.message, true); }
   };
+  $$("[data-th]").forEach(b => b.onclick = () => { setTheme(b.dataset.th); $$("[data-th]").forEach(x => x.classList.toggle("sel", x === b)); paintTheme(); });
+  $$("[data-fs]").forEach(b => b.onclick = () => { store.set("code.fs", +b.dataset.fs); $$("[data-fs]").forEach(x => x.classList.toggle("sel", x === b)); });
 }
