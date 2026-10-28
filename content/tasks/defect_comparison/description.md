@@ -74,4 +74,8 @@ sizes, tr, te = learning_curve(CNNClassifier(), X, y, train_sizes=[0.3, 0.6, 1.0
 
 ## Задача
 
-Режим один — **«С нуля»**: у этой задачи нет готовой функции в библиотеке.
+**Режим «Библиотека»** — сравнение на готовых инструментах: ablation циклом по вариантам с таблицей pandas, `sklearn.model_selection.learning_curve` (оценщик — наследник `BaseEstimator`, `ClassifierMixin`), таблица — `pd.json_normalize` + `sort_values`, оптимизаторы — `torch.optim`. Стена baseline подключается так же: `from bricks.baseline import …`.
+
+**Режим «С нуля»** — на своих кирпичиках ablation, benchmark_table, learning_curve, adam, sgd.
+
+Общие тесты (поведение и сравнение с библиотекой) должны пройти оба режима.

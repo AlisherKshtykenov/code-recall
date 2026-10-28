@@ -81,4 +81,8 @@ data/images/{ok,defect}/*.png
 
 ## Задача
 
-Режим один — **«С нуля»**: у этой задачи нет готовой функции в библиотеке.
+**Режим «Библиотека»** — вся цепочка на готовых инструментах, без своих кирпичиков: `train_test_split(..., stratify=y)`, `compute_class_weight`, `nn.Sequential` из `nn.Conv2d / BatchNorm2d / ReLU / MaxPool2d / Flatten / Dropout / Linear`, `nn.BCEWithLogitsLoss(pos_weight=…)`, `torch.optim.Adam`, метрики `sklearn.metrics`. Функции `load_images`, `train_model`, `run` — с теми же аргументами и результатом.
+
+**Режим «С нуля»** — на своих кирпичиках (импорт `from bricks.… import …`).
+
+Общие тесты (поведение и сравнение с библиотекой) должны пройти оба режима.

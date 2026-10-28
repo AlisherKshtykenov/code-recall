@@ -65,7 +65,9 @@ def evaluate(model, loader, device):
 
 ## Задача
 
-Режим один — **«С нуля»**: у этой задачи нет готовой функции в библиотеке.
+**Режим «Библиотека»** — та же сигнатура на готовых средствах torch: `@torch.inference_mode()` вместо ручного отключения градиентов и `torch.sigmoid` вместо своего кирпичика; метрики по-прежнему передаются функциями (`sklearn.metrics.recall_score` и т. п.). Тесты проверяют, что вызваны `inference_mode` и `sigmoid`.
 
-Напишите `evaluate(model, loader, metrics, score_metrics=None, threshold=0.5, device="cpu", loss=None)` в `solution.py`; вероятности — через свой `from bricks.sigmoid import sigmoid`.
-Готового аналога нет — тесты сравнивают результат с метриками sklearn на тех же предсказаниях и проверяют поведение: eval, без градиентов, порог, любые батчи и формы меток.
+**Режим «С нуля»** — напишите `evaluate(model, loader, metrics, score_metrics=None, threshold=0.5, device="cpu", loss=None)` в `solution.py`; вероятности — через свой `from bricks.sigmoid import sigmoid`.
+Тесты сравнивают результат с метриками sklearn на тех же предсказаниях и проверяют поведение: eval, без градиентов, порог, любые батчи и формы меток.
+
+Общие тесты (поведение и сравнение с библиотекой) должны пройти оба режима.

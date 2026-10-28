@@ -20,5 +20,15 @@
   "forbidden_names": [
     "from_records",
     "json_normalize"
-  ]
+  ],
+  "library_function": "pandas.json_normalize + DataFrame.sort_values",
+  "required_names": [
+    "json_normalize",
+    "sort_values"
+  ],
+  "required_kwargs": {
+    "sort_values": [
+      "ascending"
+    ]
+  }
 }

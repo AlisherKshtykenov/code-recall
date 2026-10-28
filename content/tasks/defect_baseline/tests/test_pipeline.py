@@ -2,6 +2,7 @@
 с весами классов recall выше, чем без."""
 import warnings
 
+import numpy as np
 import pytest
 import torch
 
@@ -44,9 +45,10 @@ def test_confusion_matrix_consistent(full):
     assert cm.sum() == full["n_test"] and abs(tp / (tp + fn) - full["recall"]) < 1e-9, "матрица ошибок согласована с recall"
 
 
-@pytest.mark.parametrize("seed", [0, 1])
-def test_class_weights_raise_recall(seed):
-    # короткий бюджет (3 эпохи): без весов сеть сначала «учится» отвечать «норма» — это и показывает пользу весов
-    with_w = run(seed=seed, epochs=3, use_class_weights=True)["recall"]
-    without = run(seed=seed, epochs=3, use_class_weights=False)["recall"]
-    assert with_w > without, f"с весами классов recall {with_w:.2f} должен быть выше, чем без них {without:.2f}"
+def test_class_weights_raise_recall():
+    # короткий бюджет (3 эпохи): без весов сеть сначала «учится» отвечать «норма» — это и показывает пользу весов.
+    # Среднее по трём seed: на одном запуске recall может случайно совпасть, польза весов — в среднем.
+    seeds = (0, 1, 2)
+    with_w = np.mean([run(seed=s, epochs=3, use_class_weights=True)["recall"] for s in seeds])
+    without = np.mean([run(seed=s, epochs=3, use_class_weights=False)["recall"] for s in seeds])
+    assert with_w > without + 0.15, f"с весами классов recall в среднем {with_w:.2f} должен быть заметно выше, чем без них {without:.2f}"

@@ -36,13 +36,23 @@ level_of = bricks.level_of
 
 
 
+CATEGORIES = ("preprocessing", "layers", "activations", "losses", "optimizers", "metrics", "comparison", "models")
+
+
 def category_of(db, t: Task) -> str:
     b = db.get(MapBrick, t.name)
     cats = taskfs.json_list(b.categories) if b else []
     if cats:
         return cats[0]
+    # без строки на карте — по узлу дерева; узлы вне 8 категорий: цикл обучения и стены-проекты — цвет Models
     topic = db.get(Topic, t.topic_id) if t.topic_id else None
-    return (topic.name.lower() if topic else "") or "other"
+    name = (topic.name.lower() if topic else "")
+    if name in CATEGORIES:
+        return name
+    parent = db.get(Topic, topic.parent_id) if topic and topic.parent_id else None
+    if name in ("train loop", "обучение") or (parent and parent.name.lower() == "проекты"):
+        return "models"
+    return name or "other"
 
 
 def task_card(db, t: Task) -> dict:

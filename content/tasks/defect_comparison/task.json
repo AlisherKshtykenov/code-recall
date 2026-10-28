@@ -19,31 +19,52 @@
     },
     {
       "name": "ablation",
-      "task": "ablation"
+      "task": "ablation",
+      "modes": [
+        "scratch"
+      ]
     },
     {
       "name": "benchmark_table",
-      "task": "benchmark_table"
+      "task": "benchmark_table",
+      "modes": [
+        "scratch"
+      ]
     },
     {
       "name": "learning_curve",
-      "task": "learning_curve"
+      "task": "learning_curve",
+      "modes": [
+        "scratch"
+      ]
     },
     {
       "name": "adam",
-      "task": "adam"
+      "task": "adam",
+      "modes": [
+        "scratch"
+      ]
     },
     {
       "name": "sgd",
-      "task": "sgd"
+      "task": "sgd",
+      "modes": [
+        "scratch"
+      ]
     },
     {
       "name": "normalize_images",
-      "task": "normalize_images"
+      "task": "normalize_images",
+      "modes": [
+        "scratch"
+      ]
     },
     {
       "name": "recall",
-      "task": "recall"
+      "task": "recall",
+      "modes": [
+        "scratch"
+      ]
     }
   ],
   "map_notes": {
@@ -56,5 +77,17 @@
   ],
   "forbidden_names": [
     "learning_curve_display"
-  ]
+  ],
+  "library_function": "sklearn.model_selection.learning_curve + pandas (json_normalize, sort_values) + torch.optim",
+  "required_names": [
+    "learning_curve",
+    "json_normalize",
+    "sort_values"
+  ],
+  "required_kwargs": {
+    "learning_curve": [
+      "train_sizes",
+      "cv"
+    ]
+  }
 }

@@ -60,7 +60,9 @@ table.to_csv("results/benchmark.csv", index=False)   # в results/
 
 ## Задача
 
-Режим один — **«С нуля»**: у этой задачи нет готовой функции в библиотеке.
+**Режим «Библиотека»** — та же сигнатура: `pandas.json_normalize` разворачивает `config` в столбцы, `DataFrame.sort_values(..., ascending=…, kind="mergesort")` сортирует. Тесты проверяют, что вызваны `json_normalize` и `sort_values` (с явным `ascending=`).
 
-Напишите `benchmark_table(results, sort_by="recall", ascending=False, round_to=None, params=True)` в `solution.py` → `pandas.DataFrame`.
-Аналога нет — тесты проверяют поведение: сортировка (ничьи — в исходном порядке), столбцы, оба формата входа, матрицы не попадают, понятные ошибки.
+**Режим «С нуля»** — напишите `benchmark_table(results, sort_by="recall", ascending=False, round_to=None, params=True)` в `solution.py` → `pandas.DataFrame`.
+Тесты проверяют поведение: сортировка (ничьи — в исходном порядке), столбцы, оба формата входа, матрицы не попадают, понятные ошибки.
+
+Общие тесты (поведение и сравнение с библиотекой) должны пройти оба режима.

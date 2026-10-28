@@ -1,7 +1,7 @@
 {
   "title": "evaluate (оценка модели на валидации)",
   "kind": "ml",
-  "topic": "ML/Оценка",
+  "topic": "ML/Оценка/Metrics",
   "tags": [
     "блок",
     "torch",
@@ -14,7 +14,10 @@
   "deps": [
     {
       "name": "sigmoid",
-      "task": "sigmoid"
+      "task": "sigmoid",
+      "modes": [
+        "scratch"
+      ]
     }
   ],
   "map_notes": {
@@ -29,5 +32,11 @@
   "forbidden_names": [
     "Trainer",
     "validate"
-  ]
+  ],
+  "library_function": "torch.inference_mode + torch.sigmoid",
+  "required_names": [
+    "inference_mode",
+    "sigmoid"
+  ],
+  "required_kwargs": {}
 }

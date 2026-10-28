@@ -1,7 +1,7 @@
 {
   "title": "train_one_epoch (эпоха обучения)",
   "kind": "ml",
-  "topic": "ML/Обучение",
+  "topic": "ML/Обучение/Train loop",
   "tags": [
     "блок",
     "torch",

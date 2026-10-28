@@ -14,51 +14,87 @@
   "deps": [
     {
       "name": "normalize_images",
-      "task": "normalize_images"
+      "task": "normalize_images",
+      "modes": [
+        "scratch"
+      ]
     },
     {
       "name": "stratified_split",
-      "task": "stratified_split"
+      "task": "stratified_split",
+      "modes": [
+        "scratch"
+      ]
     },
     {
       "name": "class_weights",
-      "task": "class_weights"
+      "task": "class_weights",
+      "modes": [
+        "scratch"
+      ]
     },
     {
       "name": "baseline_cnn",
-      "task": "baseline_cnn"
+      "task": "baseline_cnn",
+      "modes": [
+        "scratch"
+      ]
     },
     {
       "name": "train_one_epoch",
-      "task": "train_one_epoch"
+      "task": "train_one_epoch",
+      "modes": [
+        "scratch"
+      ]
     },
     {
       "name": "evaluate",
-      "task": "evaluate"
+      "task": "evaluate",
+      "modes": [
+        "scratch"
+      ]
     },
     {
       "name": "weighted_cross_entropy",
-      "task": "weighted_cross_entropy"
+      "task": "weighted_cross_entropy",
+      "modes": [
+        "scratch"
+      ]
     },
     {
       "name": "optimizer",
-      "slot": "optimizer"
+      "slot": "optimizer",
+      "modes": [
+        "scratch"
+      ]
     },
     {
       "name": "recall",
-      "task": "recall"
+      "task": "recall",
+      "modes": [
+        "scratch"
+      ]
     },
     {
       "name": "f1",
-      "task": "f1"
+      "task": "f1",
+      "modes": [
+        "scratch"
+      ]
     },
     {
       "name": "pr_auc",
-      "task": "pr_auc"
+      "task": "pr_auc",
+      "modes": [
+        "scratch"
+      ]
     },
     {
       "name": "confusion_matrix",
-      "task": "confusion_matrix"
+      "task": "confusion_matrix",
+      "modes": [
+        "scratch"
+      ]
     }
   ],
   "map_notes": {
@@ -73,5 +109,22 @@
     "Conv2d",
     "Linear",
     "BCEWithLogitsLoss"
-  ]
+  ],
+  "library_function": "sklearn (train_test_split, compute_class_weight, metrics) + torch.nn (Sequential, Conv2d, BCEWithLogitsLoss)",
+  "required_names": [
+    "train_test_split",
+    "compute_class_weight",
+    "Conv2d",
+    "BCEWithLogitsLoss",
+    "recall_score",
+    "average_precision_score"
+  ],
+  "required_kwargs": {
+    "train_test_split": [
+      "stratify"
+    ],
+    "BCEWithLogitsLoss": [
+      "pos_weight"
+    ]
+  }
 }

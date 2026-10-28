@@ -20,5 +20,11 @@
   ],
   "forbidden_names": [
     "product"
-  ]
+  ],
+  "library_function": "pandas.DataFrame.groupby",
+  "required_names": [
+    "DataFrame",
+    "groupby"
+  ],
+  "required_kwargs": {}
 }
