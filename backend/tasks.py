@@ -318,6 +318,19 @@ def mode_statuses(t: Task, files: dict) -> dict:
     return {m: (review.mode_status(sched.get(m)) if m in modes else "none") for m in taskfs.MODES}
 
 
+def mode_stats(t: Task, files: dict) -> dict:
+    """Сводка по режимам + статус изучения как на карте (new / learned / due / weak / none) + категория кирпичика."""
+    from .builder import category_of
+    from .mapview import mode_brick_status
+    with SessionLocal() as db:
+        t2 = db.get(Task, t.id)
+        out = review.mode_summary(t2, taskfs.modes_of(files), review.schedules(db, t2))
+        for m in taskfs.MODES:
+            out.setdefault(m, {})["learn"] = mode_brick_status(db, t2, m)
+        out["_category"] = category_of(db, t2)
+        return out
+
+
 def task_short(t: Task) -> dict:
     done = [a for a in t.attempts if a.status == "submitted"]
     scores = [a.score for a in done if a.score is not None]
@@ -332,6 +345,7 @@ def task_short(t: Task) -> dict:
             "active_attempt": next((a.id for a in reversed(t.attempts) if a.status == "active"), None),
             "due_at": iso(t.due_at), "status": review.task_status(t), "updated_at": iso(t.updated_at),
             "statuses": mode_statuses(t, files),  # {library: new|due|solved|none, scratch: …}
+            "mode_stats": mode_stats(t, files),  # по режимам: лучшая, последняя, повторов, следующий, просрочка, медиана времени
             "topic_id": t.topic_id, "tags": taskfs.json_list(t.tags), "broken": t.broken or "",
             "implements": bricks.implements_of(files), "deps": bricks.deps_of(files) or [], "level": bricks.level_of(files),
             "type": "composite" if bricks.deps_of(files) else "slot" if bricks.implements_of(files) else "plain"}

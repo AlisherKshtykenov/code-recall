@@ -435,15 +435,22 @@ def check_python(path: str) -> dict:
     """Версия Python и пакеты; для проверки нужен pytest."""
     py = resolve_python(path)
     mods = ["pytest", "numpy", "pandas", "matplotlib", "torch", "sklearn", "xgboost", "mlflow", "transformers", "dill"]
-    code = ("import sys, importlib.util as u; print(sys.version.split()[0]); "
-            f"print(' '.join(m for m in {mods!r} if u.find_spec(m)))")
+    dist = {"sklearn": "scikit-learn"}
+    code = ("import sys, importlib.util as u, importlib.metadata as md, json; print(sys.version.split()[0]); "
+            f"print(' '.join(m for m in {mods!r} if u.find_spec(m)))\n"
+            "def v(m):\n    try: return md.version(" + repr(dist) + ".get(m, m))\n    except Exception: return ''\n"
+            f"print(json.dumps({{m: v(m) for m in {mods!r} if u.find_spec(m)}}))")
     try:
         r = subprocess.run([py, "-c", code], capture_output=True, text=True, timeout=30)
     except Exception as e:
         raise ValueError(f"не запускается {py}: {e}")
     if r.returncode != 0:
         raise ValueError(f"{py}: {r.stderr.strip()[:300]}")
-    version, found = (r.stdout.strip().splitlines() + ["", ""])[:2]
+    version, found, vers = (r.stdout.strip().splitlines() + ["", "", "{}"])[:3]
     found = found.split()
-    return {"python": py, "version": version, "packages": found, "pytest": "pytest" in found,
+    try:
+        versions = json.loads(vers)
+    except ValueError:
+        versions = {}
+    return {"python": py, "version": version, "packages": found, "versions": versions, "pytest": "pytest" in found,
             "fix": None if "pytest" in found else f"{py} -m pip install pytest"}

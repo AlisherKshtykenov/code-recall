@@ -109,6 +109,23 @@ def schedules(db, task: Task) -> dict:
     return {r.mode: r for r in db.query(Schedule).filter_by(task_id=task.id).all()}
 
 
+def mode_summary(t: Task, modes: list, sched: dict, today=None) -> dict:
+    """По каждому режиму: лучшая и последняя оценка, повторов, срыв, следующий, просрочка, медиана времени сданных попыток."""
+    today = today or datetime.now().date()
+    out = {}
+    for m in modes:
+        done = sorted((a for a in t.attempts if a.status == "submitted" and (a.mode or "scratch") == m), key=lambda a: a.finished_at)
+        scores = [a.score for a in done if a.score is not None]
+        times = sorted(a.total_ms for a in done if a.total_ms)
+        row = sched.get(m)
+        due = row.due_at.date() if row and row.due_at else None
+        out[m] = {"best": max(scores, default=None), "last": scores[-1] if scores else None, "reps": row.reps if row else 0,
+                  "lapses": row.lapses if row else 0, "due_at": due.isoformat() if due else None,
+                  "overdue_days": (today - due).days if due and due < today else 0,
+                  "median_ms": times[len(times) // 2] if times else None, "attempts": len(done)}
+    return out
+
+
 def mode_status(row) -> str:
     """new — в этом режиме ещё не решал; due — пора повторить; solved — повтор позже."""
     if row is None or row.due_at is None:
@@ -167,6 +184,8 @@ def _reason(db, t: Task, mode: str, last, today) -> str:
 def today_lists(db) -> dict:
     """Списки «Сегодня» по парам (задача, режим): «recall · библиотека» и «recall · с нуля» — разные строки."""
     from . import taskfs
+    from .bricks import level_of
+    from .builder import category_of
     today = datetime.now().date()
     overdue, due, new, upcoming, reviews = [], [], [], [], []
     for r in db.query(ReviewSession).filter_by(status="active").all():
@@ -182,7 +201,8 @@ def today_lists(db) -> dict:
     tasks = db.query(Task).all()
     by_name = {t.name: t for t in tasks}
     for t in tasks:
-        modes = taskfs.modes_of(json.loads(t.current.files)) if t.current else []
+        files = json.loads(t.current.files) if t.current else {}
+        modes = taskfs.modes_of(files)
         if not modes:
             continue  # концепт — только README, в повторения не входит
         sched = schedules(db, t)
@@ -196,7 +216,10 @@ def today_lists(db) -> dict:
             if ev and (not last or ev[-1].at > last.finished_at):
                 last = SimpleNamespace(finished_at=ev[-1].at, grade=ev[-1].grade, score=None, status="brick", event=ev[-1])
             row = sched.get(mode)
-            item = {"id": t.id, "title": t.title, "kind": t.kind, "tag": t.tag, "mode": mode, "mode_name": taskfs.MODE_NAME[mode],
+            summ = mode_summary(t, [mode], sched, today)[mode]
+            item = {"id": t.id, "name": t.name, "title": t.title, "kind": t.kind, "tag": t.tag, "mode": mode, "mode_name": taskfs.MODE_NAME[mode],
+                    "level": level_of(files), "category": category_of(db, t), "median_ms": summ["median_ms"], "last_score": summ["last"],
+                    "weak_brick": bool(last and getattr(last, "status", "") == "brick" and not last.event.passed),
                     "modes": modes, "due_at": row.due_at.date().isoformat() if row and row.due_at else None,
                     "best_score": max((a.score for a in done if a.score is not None), default=None),
                     "last_grade": GRADES[last.grade] if last else None,

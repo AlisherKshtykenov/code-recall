@@ -52,107 +52,163 @@ async function startAttempt(taskId, mode) {
   } catch (e) { toast(e.message, true); }
 }
 
-// ---------------- Сегодня ----------------
+// ---------------- Сегодня (стр. 16) ----------------
+// причина из сервера: «… · сначала повтори кирпичик «X» · сначала освой применение (…)» -> текст + подсказки ↳
+function splitReason(reason) {
+  const parts = String(reason || "").split(" · ");
+  const hints = parts.filter(p => /^сначала /.test(p) || /^сломано зависимостью/.test(p));
+  return { text: parts.filter(p => !hints.includes(p)).join(" · "), hints };
+}
 async function viewToday() {
-  const t = await api("/api/today");
-  const section = (items, title, cls, empty) => `<div class="card"><div class="row" style="margin-bottom:6px"><h2 style="margin:0">${title}</h2>
-      <span class="badge ${cls}">${items.length}</span></div>
-    ${items.length ? `<div class="scroll-x"><table><tbody>${items.map(r => `<tr class="link" data-id="${r.id}">
-      <td style="width:28px">${statusCell(cls === "muted" ? "new" : cls === "ok" ? "solved" : "due")}</td>
-      <td><span class="title">${esc(r.title)}</span> ${modeBadge(r.mode, { short: true })}<div class="muted small">${esc(r.reason)}</div></td>
-      <td>${kindBadge(r.kind)}</td><td class="muted">${esc(r.tag || "")}</td>
-      <td class="nowrap muted">${r.due_at || ""}</td>
-      <td class="nowrap" style="text-align:right"><button class="${cls === "muted" ? "" : "primary"} small" data-go="${r.id}" data-mode="${r.mode || ""}">${r.active_attempt ? "продолжить" : "решать"}</button></td>
-    </tr>`).join("")}</tbody></table></div>` : `<div class="empty">${empty}</div>`}</div>`;
-  const total = t.overdue.length + t.due.length;
-  const reviewsCard = t.reviews.length ? `<div class="card"><div class="row" style="margin-bottom:6px"><h2 style="margin:0">Работа над ошибками</h2>
-      <span class="badge warn">${t.reviews.length}</span></div><table><tbody>${t.reviews.map(r => `<tr class="link" data-review="${r.id}">
-        <td style="width:28px"><span class="status-ico warn">✎</span></td>
-        <td><span class="title">${esc(r.title)}</span> ${modeBadge(r.mode, { short: true })}<div class="muted small">${esc(r.reason)}</div></td>
-        <td>${kindBadge(r.kind)}</td><td class="muted nowrap">${fmtDate(r.started_at)}</td>
-        <td style="text-align:right"><button class="primary small">продолжить</button></td></tr>`).join("")}</tbody></table></div>` : "";
-  view.innerHTML = `<div class="row" style="margin-bottom:14px"><h1 style="margin:0">Сегодня</h1>
-      <span class="muted">${total ? `к повторению: ${total}` : "повторений на сегодня нет"}${t.new.length ? ` · новых задач: ${t.new.length}` : ""}</span></div>
-    ${reviewsCard}
-    ${section(t.overdue, "Просрочено", "err", "ничего не просрочено")}
-    ${section(t.due, "На сегодня", "warn", "на сегодня всё повторено")}
-    ${section(t.new, "Новые", "muted", 'новых задач нет — <a href="#/tasks">загрузите задачи</a>')}
-    ${t.upcoming.length ? section(t.upcoming, "Ближайшие 7 дней", "ok", "") : ""}`;
+  const [t, st, all] = await Promise.all([api("/api/today"), api("/api/stats").catch(() => null), apiList("/api/tasks")]);
+  const learn = Object.fromEntries(all.map(x => [x.id, Object.fromEntries(MODES.map(m => [m, x.mode_stats?.[m]?.learn || "none"]))]));
+  const weak = [...t.overdue, ...t.due].filter(r => r.weak_brick);
+  const overdue = t.overdue.filter(r => !r.weak_brick), due = t.due.filter(r => !r.weak_brick);
+  const todo = [...overdue, ...due, ...weak];
+  const known = todo.filter(r => r.median_ms), mins = Math.round(known.reduce((a, r) => a + r.median_ms, 0) / 60000);
+  const byMode = m => todo.filter(r => r.mode === m).length;
+  const first = todo[0] || t.new[0];
+  const row = (r, opts = {}) => {
+    const { text, hints } = splitReason(r.reason);
+    return `<div class="trow2" data-id="${r.id}">
+      <div class="tr-main"><div class="tr-name"><b class="mono">${esc(r.name || r.title)}</b>${opts.inline ? `<span class="faint"> · ${MODE_NAME[r.mode]}</span>` : ""}</div><div class="muted small">${esc(text)}</div>
+        ${hints.map(h => `<div class="hint">↳ ${esc(h)}</div>`).join("")}</div>
+      ${opts.compact ? "" : opts.mini ? catTag(r.category) : `${modeBadge(r.mode, { short: true })}${levelTag(r.level)}${catTag(r.category)}<span class="ms-slot">${modeHalves(learn[r.id])}</span>`}
+      ${(sc => sc != null ? `<span class="score-b ${sc >= 70 ? "ok" : sc >= 50 ? "warn" : "err"}">${sc}</span>` : "")(opts.scoreOf?.(r))}
+      ${opts.button ? `<button class="small" data-go="${r.id}" data-mode="${r.mode}">${opts.button}</button>` : `<span class="chev" data-go="${r.id}" data-mode="${r.mode}">${ICON.chevron}</span>`}</div>`;
+  };
+  const card = (title, dot, items, opts = {}) => items.length ? `<section class="tcard"><header><i class="dot-${dot}"></i><h2>${title}</h2><span class="faint">${items.length}</span>
+      ${opts.note ? `<span class="grow"></span><span class="faint small">${opts.note}</span>` : ""}</header>${items.map(r => row(r, opts)).join("")}</section>` : "";
+  const cal = arr(st?.calendar).slice(-12);
+  const today = new Date();
+  view.innerHTML = `<div class="today">
+    <div class="today-head"><div>
+      <div class="muted">${today.toLocaleDateString("ru", { weekday: "long", day: "numeric", month: "long" }).replace(/^./, c => c.toUpperCase())}</div>
+      <h1 class="big">${todo.length ? `На сегодня ${todo.length} ${plural(todo.length, "задача", "задачи", "задач")}${mins ? ` · около ${mins} ${plural(mins, "минуты", "минут", "минут")}` : ""}` : "На сегодня повторений нет"}</h1>
+      <div class="row">${overdue.length ? `<span class="badge dot err">${overdue.length} просрочено</span>` : ""}${due.length ? `<span class="badge dot warn">${due.length} по плану</span>` : ""}
+        ${t.new.length ? `<span class="badge dot new">${t.new.length} ${plural(t.new.length, "новая", "новые", "новых")}</span>` : ""}
+        ${todo.length ? `<span class="faint">по режимам:</span>${byMode("library") ? `<span class="mb mb-lib">${ICON.book}${byMode("library")}</span>` : ""}${byMode("scratch") ? `<span class="mb mb-scr">${ICON.gear}${byMode("scratch")}</span>` : ""}` : ""}</div></div>
+      <span class="grow"></span>
+      <div class="streak-card">${st ? `<div><b class="num">${st.streak.current}</b> ${plural(st.streak.current, "день", "дня", "дней")} подряд
+          <div class="sq-row">${cal.map(d => `<i class="${d.count ? "on" : ""}" title="${d.date}: ${d.count}"></i>`).join("")}</div></div>` : ""}
+        ${first ? `<button class="primary" id="go-first">${ICON.play}Начать первую — ${esc(first.name || first.title)} · ${MODE_NAME[first.mode]}</button>` : ""}</div>
+    </div>
+    ${!todo.length && !t.reviews.length ? `<div class="card">${emptyState({ icon: "check", tone: "ok", title: "На сегодня всё",
+        text: `${t.upcoming.length ? `Ближайшие 7 дней ждут ${t.upcoming.length} ${plural(t.upcoming.length, "задача", "задачи", "задач")}.` : ""}`,
+        actions: `${t.new[0] ? `<button id="take-new">Взять новую — ${esc(t.new[0].name || t.new[0].title)}</button>` : ""}<a class="btn link" href="#/stats">Статистика</a>` })}</div>` : ""}
+    <div class="today-cols"><div>
+      ${t.reviews.length ? `<section class="tcard"><header><i class="dot-due"></i><h2>Работа над ошибками</h2><span class="faint">${t.reviews.length}</span></header>
+        ${t.reviews.map(r => `<div class="trow2" data-review="${r.id}"><div class="tr-main"><b>${esc(r.title)}</b><div class="muted small">${esc(r.reason)}</div></div>${modeBadge(r.mode, { short: true })}<button class="small primary">Продолжить</button></div>`).join("")}</section>` : ""}
+      ${card("Просрочено", "fail", overdue, { cls: "due" })}
+      ${card("На сегодня", "due", due, { cls: "due" })}
+    </div><div>
+      ${card("Слабые кирпичики", "fail", weak, { compact: true, inline: true, button: "Повторить", note: "из ошибок в больших задачах", scoreOf: r => r.last_score })}
+      ${card("Новые", "new", t.new.slice(0, 8), { mini: true, inline: true })}${t.new.length > 8 ? `<p class="faint small">и ещё ${t.new.length - 8} — в <a href="#/tasks">Задачах</a></p>` : ""}
+      ${t.upcoming.length ? `<details class="tcard"><summary><i class="dot-plan"></i><h2>Ближайшие 7 дней</h2><span class="faint">${t.upcoming.length}</span></summary>${t.upcoming.map(r => row(r, { cls: "solved" })).join("")}</details>` : ""}
+      ${todo.length ? '<p class="faint small">Порядок: сначала кирпичики, потом собранное из них; по каждой задаче — сначала применение, потом устройство.</p>' : ""}
+    </div></div></div>`;
   $$("[data-go]").forEach(b => b.onclick = e => { e.stopPropagation(); startAttempt(b.dataset.go, b.dataset.mode); });
-  $$("tr[data-id]").forEach(tr => tr.onclick = () => { location.hash = `#/task/${tr.dataset.id}`; });
-  $$("tr[data-review]").forEach(tr => tr.onclick = () => { location.hash = `#/review/${tr.dataset.review}`; });
+  $$(".trow2[data-id]").forEach(tr => tr.onclick = () => { location.hash = `#/task/${tr.dataset.id}`; });
+  $$(".trow2[data-review]").forEach(tr => tr.onclick = () => { location.hash = `#/review/${tr.dataset.review}`; });
+  const gf = $("#go-first");
+  if (gf) gf.onclick = () => startAttempt(first.id, first.mode);
+  const tn = $("#take-new");
+  if (tn) tn.onclick = () => startAttempt(t.new[0].id, t.new[0].mode);
 }
 
-// ---------------- Задачи (как список задач LeetCode) ----------------
-const lib = { q: "", kind: "", status: "", tags: [], topic: undefined, sort: "title", dir: 1 };
+// ---------------- Задачи (стр. 17) ----------------
+const lib = { q: "", mode: "", status: "", tags: [], topic: undefined, sort: "title", dir: 1 };
+// повтор: ближайший срок из режимов задачи
+function nextDue(t) {
+  const st = t.modes.map(m => t.mode_stats?.[m] || {}), today = new Date().toISOString().slice(0, 10);
+  const od = Math.max(0, ...st.map(s => s.overdue_days || 0));
+  if (od) return [`просрочено ${od} дн`, "warn", -od];
+  const dues = st.map(s => s.due_at).filter(Boolean).sort();
+  if (!dues.length) return ["не начата", "faint", 9e9];
+  return dues[0] === today ? ["сегодня", "", 0] : [fmtDay(dues[0]), "", Date.parse(dues[0]) / 864e5];
+}
 async function viewTasks() {
   // дерево тем — необязательная часть: не загрузилось — библиотека всё равно открывается, без дерева
   const [rawTasks, topics, planned] = await Promise.all([api("/api/tasks"), apiList("/api/topics"), apiList("/api/map/planned")]);
   const tasks = arr(rawTasks).map(normTask);
   lib.topic ??= store.get("lib.topic", null);
   if (lib.topic != null && !topics.some(t => t.id === lib.topic)) lib.topic = null;
-  const allTags = [...new Set(tasks.flatMap(t => t.tags))].sort();
-  const cols = [["status", ""], ["title", "Название"], ["kind", "Тип"], ["topic", "Узел"], ["best_score", "Лучшая оценка"], ["attempts", "Попыток"], ["due_at", "Повтор"]];
-  tasks.forEach(t => { t.topic = topicPath(topics, t.topic_id); });
+  const allTags = [...new Set(tasks.flatMap(t => t.tags))].filter(g => !["стена", "блок"].includes(g)).sort();
+  const learn = (t, m) => t.mode_stats?.[m]?.learn || "none";
+  tasks.forEach(t => {
+    t.topic = topicPath(topics, t.topic_id); t.category = t.mode_stats?._category;
+    t.learn = Object.fromEntries(MODES.map(m => [m, learn(t, m)]));
+    [t.dueText, t.dueCls, t.dueKey] = nextDue(t);
+    t.bestKey = Math.max(-1, ...MODES.map(m => t.mode_stats?.[m]?.best ?? -1));
+  });
+  const cols = [["name", "Название"], ["level", "Уровень"], ["category", "Тема"], ["", "Теги"], ["", "Статус: библиотека | с нуля"], ["bestKey", "Лучшая"], ["dueKey", "Повтор"]];
   view.innerHTML = `
-    <div class="row" style="margin-bottom:14px"><h1 style="margin:0">Библиотека</h1><span class="muted">${tasks.length}</span><span class="grow"></span>
-      <button id="new">＋ Новая задача</button><button class="primary" id="upload">⇪ Загрузить папки</button></div>
+    <div class="row page-head"><div><h1>Задачи</h1><div class="muted">${tasks.length} ${plural(tasks.length, "задача", "задачи", "задач")} · у каждой два режима: <span class="accent">библиотека</span> и с нуля</div></div>
+      <span class="grow"></span><button id="upload">${ICON.upload}Загрузить папки</button><button class="primary" id="new">${ICON.plus}Новая задача</button></div>
     <div class="libgrid ${store.get("lib.treeHidden", false) ? "tree-hidden" : ""}" id="libgrid">
       <div class="card libtree" id="tree"></div>
-      <div class="card" style="min-width:0">
-        <div class="row" style="margin-bottom:10px">
-          <button class="icon-btn" id="tree-toggle" title="показать / скрыть дерево тем">☰</button>
-          <input id="q" placeholder="Поиск задач" value="${esc(lib.q)}" style="min-width:200px">
-          <select id="f-kind"><option value="">Все типы</option><option value="algo" ${lib.kind === "algo" ? "selected" : ""}>Алгоритм</option><option value="ml" ${lib.kind === "ml" ? "selected" : ""}>ML</option></select>
-          <select id="f-status"><option value="">Любой статус</option>${Object.entries(STATUS).map(([k, v]) => `<option value="${k}" ${lib.status === k ? "selected" : ""}>${v[2]}</option>`).join("")}
-            <option value="planned" ${lib.status === "planned" ? "selected" : ""}>запланировано</option><option value="noplan" ${lib.status === "noplan" ? "selected" : ""}>без запланированных</option></select>
+      <div class="card lib-main" style="min-width:0">
+        <div class="lib-filters">
+          <button class="icon-btn" id="tree-toggle" title="показать / скрыть дерево тем">${ICON.panel}</button>
+          <label class="pal-search lib-q">${ICON.search}<input id="q" placeholder="Поиск по названию" value="${esc(lib.q)}"><kbd>/</kbd></label>
+          <div class="row" style="gap:6px"><button class="fchip ${lib.tags.length ? "" : "sel"}" data-tag="">все теги</button>${allTags.slice(0, 8).map(g => `<button class="fchip ${lib.tags.includes(g) ? "sel" : ""}" data-tag="${esc(g)}">${esc(g)}</button>`).join("")}</div>
+          <span class="grow"></span>
+          <div class="seg" style="margin:0">${[["", "оба режима"], ["library", "библиотека"], ["scratch", "с нуля"]].map(([k, n]) => `<button data-fm="${k}" class="${lib.mode === k ? "sel" : ""}">${n}</button>`).join("")}</div>
+          <div class="seg" style="margin:0">${[["", "Все"], ["due", "Пора"], ["weak", "Слабые"], ["new", "Новые"], ["planned", "План"]].map(([k, n]) => `<button data-fs="${k}" class="${lib.status === k ? "sel" : ""}">${n}</button>`).join("")}</div>
         </div>
-        ${allTags.length ? `<div class="row" style="margin-bottom:10px;flex-wrap:wrap"><span class="muted small">теги:</span>${allTags.map(g => `<button class="small ${lib.tags.includes(g) ? "sel" : "ghost"}" data-tag="${esc(g)}">${esc(g)}</button>`).join("")}</div>` : ""}
-        <div class="scroll-x"><table><thead><tr>${cols.map(([k, n]) => `<th class="sort" data-k="${k}">${n}${lib.sort === k ? (lib.dir > 0 ? " ↑" : " ↓") : ""}</th>`).join("")}</tr></thead>
+        <div class="scroll-x"><table class="lib-table"><thead><tr>${cols.map(([k, n]) => `<th class="${k ? "sort" : ""}" data-k="${k}">${n}${k && lib.sort === k ? (lib.dir > 0 ? " ↑" : " ↓") : ""}</th>`).join("")}</tr></thead>
           <tbody id="rows"></tbody></table></div>
-        ${tasks.length ? "" : '<div class="empty">Задач пока нет. Перетащите папку задачи (reference/, tests/, description.md) — например из examples/.</div>'}
+        <div class="faint small lib-foot" id="lib-foot"></div>
       </div></div>`;
-  const rank = { due: 0, new: 1, solved: 2 };
+  if (!tasks.length) {
+    $("#libgrid").outerHTML = `<div class="card">${emptyState({ icon: "blocks", title: "Пока ни одной задачи",
+      text: "Задача — это эталон, тесты и описание. Начни с маленького кирпичика вроде <span class=\"mono\">relu</span> или загрузи карту навыков, чтобы увидеть, что запланировано.",
+      actions: '<button class="primary" id="new2">Новая задача</button><a class="btn" href="#/settings">Импорт карты навыков</a>' })}</div>`;
+    $("#new2").onclick = () => { location.hash = "#/builder"; };
+  }
   let kids = {};
   const render = () => {
+    if (!$("#rows")) return;
     const inTopic = lib.topic == null ? null : new Set(subtreeIds(kids, lib.topic));
-    const st = ["planned", "noplan"].includes(lib.status) ? "" : lib.status;
-    const rows = tasks.filter(t => lib.status !== "planned" && (!lib.kind || t.kind === lib.kind) && (!st || t.status === st)
+    const modes = lib.mode ? [lib.mode] : MODES;
+    const rows = tasks.filter(t => lib.status !== "planned" && (!lib.mode || t.modes.includes(lib.mode))
+        && (!lib.status || modes.some(m => t.learn[m] === lib.status))
         && (!inTopic || inTopic.has(t.topic_id)) && lib.tags.every(g => t.tags.includes(g))
         && (t.title + " " + t.name + " " + t.topic + " " + t.tags.join(" ")).toLowerCase().includes(lib.q.toLowerCase()))
       .sort((a, b) => {
-        let x = a[lib.sort], y = b[lib.sort];
-        if (lib.sort === "status") { x = rank[x]; y = rank[y]; }
+        const x = a[lib.sort], y = b[lib.sort];
         if (x == null) return 1; if (y == null) return -1;
         return (typeof x === "string" ? x.localeCompare(y) : x - y) * lib.dir;
       });
-    const plan = lib.status && lib.status !== "planned" || lib.kind || lib.tags.length ? [] : planned.filter(p => (!inTopic || inTopic.has(p.topic_id))
+    const plan = (lib.status && lib.status !== "planned") || lib.mode || lib.tags.length ? [] : planned.filter(p => (!inTopic || inTopic.has(p.topic_id))
       && (p.name + " " + p.note + " " + arr(p.categories).join(" ")).toLowerCase().includes(lib.q.toLowerCase()));
-    $("#rows").innerHTML = rows.map(t => `<tr class="link" data-id="${t.id}" draggable="true" title="перетащите на узел дерева, чтобы перенести">
-      <td style="width:56px">${modeHalves(t.statuses)}</td>
-      <td><span class="title">${esc(t.title)}</span>${t.active_attempt ? ' <span class="badge warn">в процессе</span>' : ""}
-        ${TYPE_BADGE[t.type] ? ` <span class="badge">${TYPE_BADGE[t.type][1]}${t.implements ? ` · ${esc(t.implements)}` : ""}</span>` : ""}
-        ${t.broken ? ` <span class="badge err" title="${esc(t.broken)}">сломано зависимостью</span>` : ""}
-        ${t.tags.length ? `<div class="muted small">${t.tags.map(g => "#" + esc(g)).join(" ")}</div>` : ""}</td>
-      <td>${kindBadge(t.kind)}</td><td class="muted small">${esc(t.topic || "—")}</td>
-      <td>${t.best_score != null ? `<span class="${t.best_score >= 70 ? "ok" : t.best_score >= 50 ? "warn" : "err"}">${t.best_score}</span>` : '<span class="muted">—</span>'}</td>
-      <td class="muted">${t.attempts}</td><td class="muted nowrap">${t.due_at ? t.due_at.slice(0, 10) : "—"}</td></tr>`).join("")
-      + plan.map(p => `<tr class="link planned" data-plan="${esc(p.name)}" title="кирпичик карты — задачи ещё нет; клик — создать в мастере">
-        <td style="width:28px"><span class="status-ico muted">◌</span></td><td><span class="title">${esc(p.name)}</span> <span class="badge">${p.kind === "concept" ? "концепт" : "запланировано"}</span>
-          ${p.note ? `<div class="muted small">${esc(p.note)}</div>` : ""}</td><td></td><td class="muted small">${esc(topicPath(topics, p.topic_id) || "—")}</td>
-        <td class="muted">—</td><td class="muted">—</td><td class="muted small">в ${p.rows.length} стр. карты</td></tr>`).join("")
-      || '<tr><td colspan="7" class="empty">ничего не найдено</td></tr>';
+    const best = t => MODES.map(m => t.mode_stats?.[m]?.best ?? "—").join('<span class="faint"> | </span>');
+    $("#rows").innerHTML = rows.map(t => `<tr class="link" data-id="${t.id}" draggable="true" title="${esc(t.title)} — перетащите на узел дерева, чтобы перенести">
+      <td><span class="mono title">${esc(t.name)}</span>${t.active_attempt ? ' <span class="badge warn">в процессе</span>' : ""}${t.broken ? ` <span class="badge err" title="${esc(t.broken)}">сломано</span>` : ""}</td>
+      <td>${levelTag(t.level)}</td><td>${t.category ? catTag(t.category) : '<span class="faint">—</span>'}</td>
+      <td><div class="row" style="gap:4px;flex-wrap:nowrap">${t.tags.filter(g => !["стена", "блок"].includes(g)).slice(0, 1).map(g => `<span class="tag">${esc(g)}</span>`).join("")}</div></td>
+      <td>${t.modes.length ? modePair(t.learn) : '<span class="badge plan">концепт</span>'}</td>
+      <td class="nowrap mono-num">${best(t)}</td><td class="nowrap ${t.dueCls}">${t.dueText}</td></tr>`).join("")
+      + plan.map(p => `<tr class="link planned" data-plan="${esc(p.name)}" title="кирпичик карты — задачи ещё нет; клик — создать">
+        <td><span class="mono title">${esc(p.name)}</span></td><td><span class="faint">—</span></td><td>${arr(p.categories)[0] ? catTag(p.categories[0]) : ""}</td><td></td>
+        <td><span class="badge plan">${p.kind === "concept" ? "концепт" : "план"}</span></td><td class="faint">—</td><td class="faint small">в ${p.rows.length} стр. карты</td></tr>`).join("")
+      || `<tr><td colspan="7">${emptyState({ icon: "search", title: "Ничего не найдено", text: "Сбросьте фильтры или поиск." })}</td></tr>`;
+    $("#lib-foot").textContent = `Показано ${rows.length} из ${tasks.length}${plan.length ? ` · запланировано ${plan.length}` : ""}`;
     $$("#rows tr[data-id]").forEach(tr => tr.ondragstart = e => e.dataTransfer.setData("text/task", tr.dataset.id));
   };
   // выбор узла — перерисовать дерево и таблицу; правка дерева (создать, перенести…) — перечитать всё
   const onTree = (reload = true) => { if (reload) return viewTasks(); kids = renderTopicTree($("#tree"), topics, lib, onTree); render(); };
-  kids = renderTopicTree($("#tree"), topics, lib, onTree);
+  if ($("#tree")) kids = renderTopicTree($("#tree"), topics, lib, onTree);
   render();
+  if (!$("#rows")) { $("#upload").onclick = uploadDialog; $("#new").onclick = () => { location.hash = "#/builder"; }; return; }
   $("#tree-toggle").onclick = () => { const g = $("#libgrid"); g.classList.toggle("tree-hidden"); store.set("lib.treeHidden", g.classList.contains("tree-hidden")); };
-  $$("[data-tag]").forEach(b => b.onclick = () => { const g = b.dataset.tag; lib.tags = lib.tags.includes(g) ? lib.tags.filter(x => x !== g) : [...lib.tags, g]; viewTasks(); });
+  $$("[data-tag]").forEach(b => b.onclick = () => { const g = b.dataset.tag; lib.tags = !g ? [] : lib.tags.includes(g) ? lib.tags.filter(x => x !== g) : [...lib.tags, g]; viewTasks(); });
+  $$("[data-fm]").forEach(b => b.onclick = () => { lib.mode = b.dataset.fm; $$("[data-fm]").forEach(x => x.classList.toggle("sel", x === b)); render(); });
+  $$("[data-fs]").forEach(b => b.onclick = () => { lib.status = b.dataset.fs; $$("[data-fs]").forEach(x => x.classList.toggle("sel", x === b)); render(); });
   $("#q").oninput = e => { lib.q = e.target.value; render(); };
-  $("#f-kind").onchange = e => { lib.kind = e.target.value; render(); };
-  $("#f-status").onchange = e => { lib.status = e.target.value; render(); };
+  const slash = e => { if (!document.body.contains($("#q") || document.createElement("i"))) return document.removeEventListener("keydown", slash);
+    if (e.key === "/" && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName)) { e.preventDefault(); $("#q").focus(); } };
+  document.addEventListener("keydown", slash);
   $$("th.sort").forEach(th => th.onclick = () => { lib.dir = lib.sort === th.dataset.k ? -lib.dir : 1; lib.sort = th.dataset.k; viewTasks(); });
   $("#rows").onclick = e => {
     const tr = e.target.closest("tr[data-id]"), pl = e.target.closest("tr[data-plan]");
@@ -214,31 +270,66 @@ function uploadDialog() {
 }
 
 // ---------------- Страница задачи ----------------
+// статус изучения режима (как на карте) -> бейдж
+const LEARN = { learned: ["ok", "выучено"], due: ["warn", "пора"], weak: ["err", "слабо"], new: ["new", "новое"], none: ["plan", "нет режима"] };
+const fmtDay = iso => iso ? new Date(iso).toLocaleDateString("ru", { day: "numeric", month: "short" }).replace(".", "") : "";
+const fmtMin = ms => ms ? `${Math.max(1, Math.round(ms / 60000))} ${plural(Math.max(1, Math.round(ms / 60000)), "минута", "минуты", "минут")}` : "";
+// README по разделам: вступление, «Как применять», «Как работает», остальное
+function splitReadme(text) {
+  const parts = { intro: "", apply: "", how: "", rest: "" };
+  let cur = "intro";
+  for (const line of String(text || "").split("\n")) {
+    const h = /^##\s+(.+)/.exec(line);
+    if (h) cur = /как применять/i.test(h[1]) ? "apply" : /как работает/i.test(h[1]) ? "how" : "rest";
+    if (h && (cur === "apply" || cur === "how")) continue;
+    parts[cur] += line + "\n";
+  }
+  parts.intro = parts.intro.replace(/^#\s+.+\n/, "");  // заголовок — уже в шапке
+  return parts;
+}
+
 async function viewTask(id, tab = "about") {
-  const t = normTask(await api(`/api/tasks/${id}`));
-  view.innerHTML = `
-    <div class="row" style="margin-bottom:6px"><a href="#/tasks" class="muted">← Библиотека</a></div>
-    <div class="row" style="margin-bottom:14px"><h1 style="margin:0">${esc(t.title)}</h1>${kindBadge(t.kind)}
-      ${TYPE_BADGE[t.type] ? `<span class="badge">${TYPE_BADGE[t.type][1]}${t.implements ? ` · слот ${esc(t.implements)}` : ""}</span>` : ""}
-      ${t.tags.map(g => `<span class="badge">#${esc(g)}</span>`).join("")}
-      ${modeHalves(t.statuses)}<span class="grow"></span>
-      <button class="ghost" id="dup" title="копия задачи со всеми файлами">Дублировать</button>
-      <a class="btn" href="#/edit/${t.id}">✎ Редактировать задачу</a>
-      <a class="btn" href="#/builder/${t.id}" title="визуальная доска: зависимости, «Собрать в блок», эталоны обоих режимов">Конструктор</a>
-      ${t.modes.length ? `<div class="seg" id="mode-seg" style="margin:0" title="Библиотека — как и где применять; С нуля — как работает. Засчитываются оба.">
-        ${MODES.map(m => `<button data-mode="${m}" ${t.modes.includes(m) ? "" : 'disabled title="у задачи нет этого режима"'}>${MODE_TITLE[m]}</button>`).join("")}</div>
-      <button class="primary" id="go">${t.deps.length ? "Собрать и начать" : "Начать"}</button>` : '<span class="badge">концепт — только README</span>'}</div>
-    ${t.broken ? `<div class="card" style="border-left:3px solid var(--fail)"><b class="err">Сломано зависимостью</b> — ${esc(t.broken)}
-      <span class="muted small">Тесты задачи упали на эталоне после смены эталона кирпичика; такие тесты не влияют на оценку.</span>
-      <button class="small" id="recheck">Перепроверить</button></div>` : ""}
-    <div class="tabs">${[["about", "Описание"], ["compose", "Состав"], ["attempts", "Попытки"], ["versions", "Версии"], ["settings", "Настройки"]]
-      .map(([k, n]) => `<a href="#/task/${id}/${k}" class="${k === tab ? "active" : ""}">${n}</a>`).join("")}</div>
-    <div id="tab"></div>`;
+  const [t0, topics] = await Promise.all([api(`/api/tasks/${id}`), apiList("/api/topics")]);
+  const t = normTask(t0);
+  const ms = t.mode_stats || {}, cat = ms._category;
   let mode = store.get(`mode.${t.id}`, t.default_mode);
   if (!t.modes.includes(mode)) mode = t.default_mode;
-  const paintMode = () => $$("#mode-seg [data-mode]").forEach(b => b.classList.toggle("sel", b.dataset.mode === mode));
-  $$("#mode-seg [data-mode]").forEach(b => b.onclick = () => { mode = b.dataset.mode; store.set(`mode.${t.id}`, mode); paintMode(); });
-  paintMode();
+  const crumbs = ["Задачи", ...(t.topic_id ? topicPath(topics, t.topic_id).split(" / ") : [])];
+  const modeCard = m => {
+    const s = ms[m] || {}, [cls, word] = LEARN[s.learn] || LEARN.none, on = t.modes.includes(m);
+    const pct = s.last != null ? s.last : 0, bar = { ok: "var(--ok)", warn: "var(--due)", err: "var(--fail)" }[cls] || "var(--new)";
+    return `<button class="mode-card ${on ? "" : "off"} ${m === mode ? "sel" : ""}" data-mode="${m}" ${on ? "" : "disabled"}>
+      <div class="row">${modeBadge(m)}<span class="muted">${m === "library" ? "как и где применять" : "как устроено внутри"}</span><span class="grow"></span><span class="badge dot ${cls}">${on ? word : "нет режима"}</span></div>
+      ${on ? `<div class="mc-bar"><i style="width:${pct}%;background:${bar}"></i></div>
+      <div class="mc-stats">${s.best != null ? `<span>лучшее <b>${s.best}</b></span>` : '<span class="faint">ещё не сдавал</span>'}
+        ${s.last != null && s.last !== s.best ? `<span>последнее <b>${s.last}</b></span>` : ""}${s.reps ? `<span>повторов <b>${s.reps}</b></span>` : ""}
+        ${s.overdue_days ? `<span class="warn">просрочено на ${s.overdue_days} ${plural(s.overdue_days, "день", "дня", "дней")}</span>` : s.due_at ? `<span>следующий <b>${fmtDay(s.due_at)}</b></span>` : ""}</div>` : ""}
+    </button>`;
+  };
+  view.innerHTML = `<div class="task-page">
+    <div class="crumbs page-crumbs">${crumbs.map((c, i) => i ? esc(c) : '<a href="#/tasks">Задачи</a>').join('<span class="sep">/</span>')}</div>
+    <div class="row task-head"><h1 class="mono">${esc(t.name)}</h1>${levelTag(t.level)}${cat ? catTag(cat) : ""}${t.tags.filter(g => !["стена", "блок"].includes(g)).map(g => `<span class="tag">${esc(g)}</span>`).join("")}
+      <span class="grow"></span><a class="btn link" href="#/edit/${t.id}">Редактировать</a><button class="link" id="dup" title="копия задачи со всеми файлами">Дублировать</button>
+      <a class="btn link" href="#/builder/${t.id}">Открыть в конструкторе</a></div>
+    <p class="muted task-sub">${esc(t.title)}</p>
+    ${t.broken ? `<div class="alert err"><b>Сломано зависимостью</b> — ${esc(t.broken)}<p class="muted small">Тесты задачи упали на эталоне после смены эталона кирпичика; такие тесты не влияют на оценку.</p>
+      <button class="small" id="recheck">Перепроверить</button></div>` : ""}
+    ${t.modes.length ? `${MODES.map(modeCard).join("")}
+      <button class="primary go-big" id="go"></button><div class="faint small go-note" id="go-note"></div>`
+      : `<div class="card">${emptyState({ icon: "book", title: "Концепт", text: "Только README — без эталона и тестов, в повторения не входит." })}</div>`}
+    <div class="tabs">${[["about", "README"], ["attempts", `Попытки <span class="faint">${t.attempts || ""}</span>`], ["compose", "Состав"], ["versions", "Версии"], ["settings", "Настройки"]]
+      .map(([k, n]) => `<a href="#/task/${id}/${k}" class="${k === tab ? "active" : ""}">${n}</a>`).join("")}</div>
+    <div id="tab"></div></div>`;
+  const paint = () => {
+    $$(".mode-card").forEach(b => b.classList.toggle("sel", b.dataset.mode === mode));
+    const go = $("#go");
+    if (!go) return;
+    go.innerHTML = `${ICON.play}${t.deps.length ? "Собрать и начать" : "Начать"} · ${MODE_NAME[mode]}`;
+    const s = ms[mode] || {};
+    $("#go-note").textContent = s.median_ms ? `≈ ${fmtMin(s.median_ms)} — обычно столько` : "";
+  };
+  $$(".mode-card:not(.off)").forEach(b => b.onclick = () => { mode = b.dataset.mode; store.set(`mode.${t.id}`, mode); paint(); });
+  paint();
   const go = $("#go");
   if (go) go.onclick = () => startAttempt(t.id, mode);
   $("#dup").onclick = async () => { const r = await api(`/api/tasks/${t.id}/duplicate`, { method: "POST" }); toast("копия создана"); location.hash = `#/task/${r.id}`; };
@@ -247,11 +338,23 @@ async function viewTask(id, tab = "about") {
   const box = $("#tab");
   if (tab === "compose") return renderComposition(box, id);
   if (tab === "about") {
-    box.innerHTML = `<div class="card"><div class="md">${t.description ? md(t.description) : '<p class="muted">Описания нет — добавьте description.md в редакторе задачи.</p>'}</div></div>
-      <div class="card"><div class="row"><span class="label" style="margin:0">Файлы эталона</span></div>
-        <div class="mt">${t.reference.map(f => `<span class="badge">${esc(f)} · ${t.roles[f] === "given" ? "дан" : "пишу сам"}</span>`).join(" ")}</div>
-        <div class="muted small mt">тестов: ${t.test_files.map(esc).join(", ") || "нет"} · лимит времени ${t.timeout} с · версия ${t.version}${t.dirty ? ' · <span class="warn">в папке есть несохранённые изменения</span>' : ""}</div>
-        ${t.deps.length ? `<div class="label mt">Зависимости</div>${t.deps.map(d => `<div class="small mono">${d.slot ? `from slots.${esc(d.slot)} import …  <span class="muted">(слот: реализация выбирается при сборке)</span>` : `from bricks.${esc(d.name)} import …  <span class="muted">← ${esc(d.task)}</span>`}</div>`).join("")}` : ""}</div>`;
+    if (!t.description) { box.innerHTML = `<div class="card">${emptyState({ icon: "files", title: "Описания нет", text: "Добавьте description.md в редакторе задачи.", actions: `<a class="btn" href="#/edit/${t.id}">Открыть редактор</a>` })}</div>`; return; }
+    const r = splitReadme(t.description);
+    let meta = {};
+    try { meta = JSON.parse((await api(`/api/tasks/${t.id}/file?path=task.json`)).content); } catch { meta = {}; }
+    const rules = [
+      ...arr(meta.required_names).map(n => `<span class="chip-n">библиотека: ${esc(n)}</span>`),
+      ...[...arr(meta.forbidden_modules), ...arr(meta.forbidden_names)].map(n => `<span class="chip-n bad">нельзя с нуля: ${esc(n)}</span>`)];
+    box.innerHTML = `${r.intro.trim() ? `<div class="card"><div class="md">${md(r.intro)}</div></div>` : ""}
+      ${r.apply.trim() || r.how.trim() ? `<div class="readme-cols">
+        <section class="rcard"><header>${ICON.book}<h2>Как применять</h2></header><div class="md">${r.apply.trim() ? md(r.apply) : '<p class="muted">раздела нет</p>'}</div></section>
+        <section class="rcard how"><header><span class="mi mi-scr">${ICON.gear}</span><h2>Как работает</h2></header><div class="md">${r.how.trim() ? md(r.how) : '<p class="muted">раздела нет</p>'}</div>
+          ${rules.length ? `<div class="label mt">Правила режима</div><div class="chips">${rules.join("")}</div>` : ""}</section></div>` : ""}
+      ${r.rest.trim() ? `<div class="card"><div class="md">${md(r.rest)}</div></div>` : ""}
+      <div class="card"><div class="label">Файлы и зависимости</div>
+        <div class="chips">${t.reference.map(f => `<span class="chip-n">${esc(f)} · ${t.roles[f] === "given" ? "дан" : "пишу сам"}</span>`).join("")}</div>
+        <div class="muted small mt">тестов: ${t.test_files.length || "нет"} · лимит времени ${t.timeout} с · версия ${t.version}${t.dirty ? ' · <span class="warn">в папке есть несохранённые изменения</span>' : ""}</div>
+        ${t.deps.length ? `<div class="mt">${t.deps.map(d => `<div class="small mono">${d.slot ? `from slots.${esc(d.slot)} import …  <span class="muted">(слот: реализация выбирается при сборке)</span>` : `from bricks.${esc(d.name)} import …  <span class="muted">← ${esc(d.task)}</span>`}</div>`).join("")}</div>` : ""}</div>`;
   } else if (tab === "attempts") {
     box.innerHTML = '<div class="card" id="jr"></div><div class="card" id="hist-card" hidden><h3>Оценка и время по попыткам</h3><div id="hist"></div></div>';
     const rows = await journalTable($("#jr"), { task_id: id });

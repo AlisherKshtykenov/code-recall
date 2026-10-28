@@ -56,7 +56,7 @@ function renderTopicTree(box, topics, state, onChange) {
   const row = (t, d) => {
     const has = (kids[t.id] || []).length, open = !collapsed.has(t.id);
     return `<div class="tnode ${state.topic === t.id ? "sel" : ""}" data-topic="${t.id}" draggable="true" style="padding-left:${8 + d * 14}px">
-        <span class="caret" data-caret="${t.id}">${has ? (open ? "▾" : "▸") : ""}</span><span class="tname grow">${esc(t.name)}</span>
+        <span class="caret" data-caret="${t.id}">${has ? (open ? "⌄" : "›") : ""}</span>${catClass(t.name) ? `<i class="tdot ${catClass(t.name)}"></i>` : ""}<span class="tname grow">${esc(t.name)}</span>
         <span class="tcount" title="задач в узле и ниже · пора повторить · запланировано">${t.total}${t.total_due ? ` · <span class="warn">${t.total_due}</span>` : ""}${t.total_planned ? ` · <span class="planned-n">◌${t.total_planned}</span>` : ""}</span>
         <span class="tact"><button class="icon-btn" data-add="${t.id}" title="подузел">＋</button><button class="icon-btn" data-ren="${t.id}" title="переименовать">✎</button><button class="icon-btn" data-del="${t.id}" title="удалить узел (задачи перейдут выше)">✕</button></span></div>
       ${has && open ? (kids[t.id] || []).map(k => row(k, d + 1)).join("") : ""}`;

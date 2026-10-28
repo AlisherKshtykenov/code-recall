@@ -14,11 +14,13 @@ def streak(days: set, today: date) -> dict:
     while d in days:
         cur += 1
         d -= timedelta(days=1)
-    best, run, prev = 0, 0, None
+    best, run, prev, best_end = 0, 0, None, None
     for d in sorted(days):
         run = run + 1 if prev and d - prev == timedelta(days=1) else 1
-        best, prev = max(best, run), d
-    return {"current": cur, "best": best, "today_done": today in days}
+        if run >= best:
+            best, best_end = run, d
+        prev = d
+    return {"current": cur, "best": best, "best_end": best_end.isoformat() if best_end else None, "today_done": today in days}
 
 
 def overview(db) -> dict:
@@ -66,5 +68,13 @@ def overview(db) -> dict:
         per_day[a.finished_at.date()] += 1
     calendar = [{"date": (cal_start + timedelta(days=i)).isoformat(), "count": per_day.get(cal_start + timedelta(days=i), 0)}
                 for i in range((today - cal_start).days + 1)]
-    return {"streak": streak(days, today), "attempts": len(rows), "days_active": len(days),
+    ms_12w = sum(a.total_ms or 0 for a in rows if a.finished_at.date() >= cal_start)
+    # «с нуля» отстаёт от «библиотеки»: средняя разница первых сдач по задачам, где сданы оба режима
+    first = defaultdict(dict)
+    for a in rows:
+        first[a.task_id].setdefault(a.mode or "scratch", a.finished_at.date())
+    lags = [(f["scratch"] - f["library"]).days for f in first.values() if "scratch" in f and "library" in f]
+    return {"hours_12w": round(ms_12w / 3_600_000, 1), "days_12w": len([d for d in days if d >= cal_start]),
+            "mode_lag_days": round(sum(lags) / len(lags)) if lags else None,
+            "streak": streak(days, today), "attempts": len(rows), "days_active": len(days),
             "tasks": len(tasks), "weak_tests": weak_tests, "weak_tags": weak_tags, "calendar": calendar}

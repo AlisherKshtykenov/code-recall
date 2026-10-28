@@ -187,7 +187,8 @@ async function openIDE(root, cfg) {
     const env = info.python.includes(".venv") ? " · .venv" : "";
     $("#sb-py", root).innerHTML = `<i class="sb-dot ${info.pytest ? "ok" : "fail"}"></i>Python ${esc(info.version)}${env}`;
     $("#sb-py", root).title = info.python + (info.pytest ? "" : " — нет pytest: " + (info.fix || ""));
-    $("#sb-pk", root).textContent = info.packages.filter(x => x !== "pytest").join(" · ");
+    const ver = info.versions || {};
+    $("#sb-pk", root).textContent = info.packages.filter(x => x !== "pytest").map(x => `${x} ${(ver[x] || "").split(".").slice(0, 2).join(".")}`.trim()).join(" · ");
   });
 
   // ---------- строка с ошибкой прямо в редакторе: «test_x: ожидалось …, получено …» ----------

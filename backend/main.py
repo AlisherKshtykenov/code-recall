@@ -142,6 +142,17 @@ def list_backups():
     return backup.list_backups()
 
 
+@app.get("/api/backup/file")
+def backup_file(name: str):
+    """Скачать копию базы из data/backups (автокопию или ручную) — восстановление: «Загрузить бэкап»."""
+    from fastapi.responses import FileResponse
+    for b in backup.list_backups():
+        if b["name"] == name:
+            f = backup.BACKUP_DIR / b["name"]
+            return FileResponse(f, filename=f.name)
+    raise HTTPException(404, "нет такой копии")
+
+
 @app.post("/api/backup/now")
 def backup_now():
     made = backup.daily_backup()
