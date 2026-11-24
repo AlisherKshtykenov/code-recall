@@ -1,6 +1,11 @@
-.env
+.venv
+.claude
 data/
 __pycache__/
 .idea/
 .DS_Store
 design/*.pdf
+.env
+.env.*
+!.env.example
+.pytest_cache/

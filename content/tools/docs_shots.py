@@ -8,7 +8,7 @@ from playwright.sync_api import sync_playwright
 
 BASE = sys.argv[1]  # http://127.0.0.1:8003
 IDS = json.loads(sys.argv[2])  # {recall, baseline, attempt, review}
-ROOT = Path("/Users/nakhvamdis-ka/Documents/T./docs")
+ROOT = Path(__file__).resolve().parents[2] / "docs"
 IMG = ROOT / "img"
 IMG.mkdir(parents=True, exist_ok=True)
 RED = (240, 72, 62)
